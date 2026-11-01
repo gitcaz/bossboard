@@ -57,6 +57,9 @@ try {
     await page.waitForSelector("#setf");
     check(await page.locator("#synctxt").innerText() === "not connected", "unconfigured app opens Settings, chip says 'not connected'");
     await page.evaluate(api => localStorage.setItem("bb3.apiBase", api), fake.api);  // test-only: point at the fake
+    check(await page.inputValue("input[name=owner]") === "gitcaz" && await page.inputValue("input[name=repo]") === "bossboard-data" && await page.inputValue("input[name=branch]") === "main", "owner/repo/branch prefilled as real values");
+    await page.click("#setf button.pri"); await page.waitForTimeout(300);
+    check(/Missing: Fine-grained token/.test(await page.locator("#setmsg").innerText()), "Save without token -> inline 'Missing: Fine-grained token'");
     await page.fill("input[name=owner]", "o"); await page.fill("input[name=repo]", "data"); await page.fill("input[name=token]", "fake_token");
     await page.selectOption("#who", "boss");
     await Promise.all([page.waitForNavigation(), page.click("#setf button.pri")]);
@@ -130,7 +133,7 @@ try {
       await page.evaluate(() => localStorage.setItem("bb3.token", "fake_wrong"));
       await page.reload();
       await page.waitForFunction(() => document.querySelector("#sync").classList.contains("error"), null, { timeout: 15000 });
-      check(/token rejected/.test(await page.locator("#banner").innerText()), "bad token -> error banner with Settings link");
+      check(/401 bad token/.test(await page.locator("#banner").innerText()), "bad token -> error banner with Settings link");
       await page.screenshot({ path: path.join(SHOTS, "desktop-bad-token.png") });
       await page.evaluate(() => localStorage.setItem("bb3.token", "fake_token"));
     }

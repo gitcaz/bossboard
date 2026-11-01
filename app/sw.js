@@ -1,6 +1,6 @@
 // Service worker: caches the app shell for full offline use. GitHub API traffic is never cached here.
-const CACHE = "bossboard-v3-3.0.1";
-const SHELL = ["./", "index.html", "css/style.css", "js/app.js", "js/core.js", "js/sync.js", "js/github.js", "js/store.js",
+const CACHE = "bossboard-v3-3.0.2";
+const SHELL = ["./", "index.html", "css/style.css", "js/app.js", "js/guard.js", "js/core.js", "js/sync.js", "js/github.js", "js/store.js",
   "manifest.json", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png", "icons/apple-touch-icon.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {

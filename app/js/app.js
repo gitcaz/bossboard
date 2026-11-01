@@ -4,7 +4,8 @@ import { GitHub, safeApiBase } from "./github.js";
 import { IDBStore } from "./store.js";
 import { live, listsSorted, tasksSorted, nextUp, todayView, nameOf, handles, dayStr, BBError } from "./core.js";
 
-const VERSION = "3.0.1";
+const VERSION = "3.0.2";
+const DEFAULTS = { owner: "gitcaz", repo: "bossboard-data", branch: "main" };  // empty fields fall back to these
 const $ = s => document.querySelector(s);
 const LS = {
   get: k => localStorage.getItem("bb3." + k) || "",
@@ -22,17 +23,21 @@ $("#theme").onclick = () => { const d = document.documentElement; const dark = d
 
 function esc(s) { return s == null ? "" : String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function err(m) { const e = $("#err"); e.textContent = m; e.style.display = "block"; clearTimeout(err.t); err.t = setTimeout(() => e.style.display = "none", 6000); }
-function cfg() { return { owner: LS.get("owner"), repo: LS.get("repo"), branch: LS.get("branch") || "main", token: LS.get("token"), apiBase: safeApiBase(LS.get("apiBase")) }; }
+function cfg() { return { owner: LS.get("owner") || DEFAULTS.owner, repo: LS.get("repo") || DEFAULTS.repo, branch: LS.get("branch") || DEFAULTS.branch, token: LS.get("token"), apiBase: safeApiBase(LS.get("apiBase")) }; }
+function cleanToken(t) { return (t || "").replace(/^\s*(bearer|token)\s+/i, "").replace(/\s+/g, ""); }  // pasted with spaces/newlines/prefix
+function showBanner(msg, withButtons) { const b = $("#banner"); b.style.display = "block"; b.innerHTML = esc(msg) + (withButtons ? ' <button data-tab="settings">Settings</button> <button data-a="sync-now">Retry</button>' : ""); }
 function configured() { const c = cfg(); return !!(c.owner && c.repo && c.token); }
 
 // ------------------------------------------------------------------ engine
 async function boot() {
-  const c = cfg();
+  const c = cfg(), connecting = LS.get("connect") === "1"; LS.set("connect", "");
   const key = "bossboard3:" + (c.owner && c.repo ? c.owner + "/" + c.repo : "_local");
   engine = new Engine({ store: new IDBStore(key), gh: configured() ? new GitHub(c) : null, via: "web", onChange: onEngine });
+  if (connecting && engine.gh) engine._set("syncing", { connecting: true });
   await engine.init();
+  window.__bbReady = true;
   if (!configured() && tab !== "settings") tab = "settings";
-  render(); doSync();
+  render(); doSync(connecting);
 }
 function onEngine(kind) { renderStatus(); if (kind === "edit") { render(); scheduleSync(1500); } else if (kind === "pulled" || kind === "pushed") { if (!busy()) render(); } }
 function scheduleSync(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(doSync, ms); }
@@ -46,6 +51,7 @@ async function doSync(manual) {
     else if (e.kind === "auth" || e.kind === "notfound" || e.kind === "empty") authBlocked = true;
     else if (e.kind === "network") { if (navigator.onLine) scheduleSync(30000); /* else wait for 'online' */ }
     else scheduleSync(30000);
+    if (!e.kind) { engine._set("error", { error: "sync failed: " + (e.message || e) }); }   // unexpected bug: never silent
   }
   renderStatus(); if (!busy()) render();
 }
@@ -60,7 +66,7 @@ function renderStatus() {
   const st = engine.status, el = $("#sync"); let txt, cls = st.state;
   const t = st.lastSync ? new Date(st.lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   if (!engine.gh) { cls = "unconfigured"; txt = "not connected"; }
-  else if (st.state === "syncing") txt = "syncing" + (st.pending ? " (" + st.pending + ")" : "") + "...";
+  else if (st.state === "syncing") txt = (!st.lastSync ? "connecting" : "syncing") + (st.pending ? " (" + st.pending + ")" : "") + "...";
   else if (st.state === "offline") txt = (st.error ? "can't reach GitHub" : "offline") + (st.pending ? " · " + st.pending + " pending" : "");
   else if (st.state === "error") txt = "sync error" + (st.pending ? " · " + st.pending + " pending" : "");
   else if (st.state === "ratelimited") txt = "rate limited" + (st.pending ? " · " + st.pending + " pending" : "");
@@ -69,9 +75,8 @@ function renderStatus() {
   el.className = "sync " + cls; $("#synctxt").textContent = txt;
   el.title = (st.error ? st.error + " - " : "") + "click to sync now";
   const b = $("#banner");
-  if (engine.gh && (st.state === "error" || st.state === "ratelimited") && st.error) {
-    b.style.display = "block"; b.innerHTML = esc(st.error) + ' <button data-tab="settings">Settings</button> <button data-a="sync-now">Retry</button>';
-  } else b.style.display = "none";
+  if (engine.gh && ["error", "ratelimited", "offline"].includes(st.state) && st.error) showBanner(st.error, true);
+  else if (b.dataset.sticky !== "1") b.style.display = "none";
 }
 
 // ------------------------------------------------------------------ derived state
@@ -202,8 +207,8 @@ function rSettings() {
     '<label>Data repo name</label><input name="repo" value="' + esc(c.repo) + '" placeholder="bossboard-data" autocomplete="off" autocapitalize="off" spellcheck="false">' +
     '<label>Branch</label><input name="branch" value="' + esc(c.branch) + '" autocomplete="off">' +
     '<label>Fine-grained token (Contents: Read and write, this repo only)</label><input name="token" type="password" value="" placeholder="' + (c.token ? "saved &mdash; leave empty to keep" : "github_pat_...") + '" autocomplete="off">' +
-    '<div class="acts"><button class="pri">Save &amp; sync</button><button type="button" data-a="sync-now">Sync now</button><button type="button" class="del" data-a="forget-token">Forget token</button><button type="button" class="del" data-a="clear-cache">Clear local cache</button></div></form>' +
-    (testMsg ? '<p>' + testMsg + '</p>' : "") +
+    '<div class="acts"><button class="pri">Save &amp; sync</button><button type="button" data-a="test-conn">Test connection</button><button type="button" data-a="sync-now">Sync now</button><button type="button" class="del" data-a="forget-token">Forget token</button><button type="button" class="del" data-a="clear-cache">Clear local cache</button></div></form>' +
+    '<div id="setmsg" class="setmsg">' + (testMsg ? esc(testMsg) : "") + '</div><ol id="testout" class="testout small"></ol>' +
     '<h3>Status</h3><div class="statgrid"><b>Connection</b><span>' + (engine.gh ? esc(c.owner + "/" + c.repo + "@" + c.branch) : '<span class="bad">not configured</span>') + '</span>' +
     '<b>State</b><span>' + esc(st.state) + (st.error ? ' &mdash; <span class="bad">' + esc(st.error) + '</span>' : "") + '</span>' +
     '<b>Pending changes</b><span>' + st.pending + '</span><b>Last sync</b><span>' + (st.lastSync ? esc(new Date(st.lastSync).toLocaleString()) : "never") + '</span>' +
@@ -264,6 +269,7 @@ document.addEventListener("click", async e => {
   if (a === "del-resource") { if (confirm("Delete resource?")) act(o => o.remove("resource", id)); return; }
   if (a === "older") { try { await engine.loadOlderLog(200); } catch (x) { err(x.message); } return render(); }
   if (a === "sync-now") { authBlocked = false; blockedUntil = 0; return doSync(true); }
+  if (a === "test-conn") return testConnection();
   if (a === "forget-token") { if (confirm("Remove the token from this device? Unsynced changes stay in the local cache.")) { LS.set("token", ""); testMsg = "Token removed from this device."; location.reload(); } return; }
   if (a === "clear-cache") {
     const n = engine.status.pending;
@@ -287,9 +293,14 @@ document.addEventListener("change", e => {
 document.addEventListener("submit", async e => {
   if (e.target.id === "setf") {
     e.preventDefault(); const fd = new FormData(e.target); const old = cfg();
-    const owner = (fd.get("owner") || "").trim(), repo = (fd.get("repo") || "").trim(), branch = (fd.get("branch") || "").trim() || "main", token = (fd.get("token") || "").trim();
-    if (token && !/^(github_pat_|ghp_|gho_|ghu_|ghs_|fake_)/.test(token)) { err("That does not look like a GitHub token."); return; }
+    const owner = (fd.get("owner") || "").trim() || DEFAULTS.owner, repo = (fd.get("repo") || "").trim() || DEFAULTS.repo,
+      branch = (fd.get("branch") || "").trim() || DEFAULTS.branch, token = cleanToken(fd.get("token"));
+    const say = m => { const el = $("#setmsg"); if (el) { el.textContent = m; el.classList.add("bad"); } err(m); };
+    if (!token && !LS.get("token")) { say("Missing: Fine-grained token. Paste it into the token field, then Save & sync."); $("input[name=token]").focus(); return; }
+    if (token && !/^(github_pat_|ghp_|gho_|ghu_|ghs_|fake_)/.test(token)) { say("That does not look like a GitHub token (it should start with github_pat_)."); return; }
+    if (!/^[A-Za-z0-9-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) { say("Owner / repo name contains invalid characters."); return; }
     LS.set("owner", owner); LS.set("repo", repo); LS.set("branch", branch); if (token) LS.set("token", token);
+    LS.set("connect", "1");
     if (old.owner !== owner || old.repo !== repo) LS.set("tab", "next");
     testMsg = ""; authBlocked = false; blockedUntil = 0;
     location.hash = configured() ? "#next" : "#settings"; location.reload(); return;
@@ -310,6 +321,33 @@ document.addEventListener("drop", e => {
   if (before === id) return;
   act(o => o.place(id, list, before));
 });
+async function testConnection() {
+  const f = $("#setf"), out = $("#testout"); if (!f || !out) return;
+  const fd = new FormData(f), c = cfg();
+  const o = (fd.get("owner") || "").trim() || DEFAULTS.owner, r = (fd.get("repo") || "").trim() || DEFAULTS.repo, br = (fd.get("branch") || "").trim() || DEFAULTS.branch;
+  const tok = cleanToken(fd.get("token")) || c.token;
+  out.innerHTML = ""; $("#setmsg").textContent = "Testing " + o + "/" + r + "@" + br + " ...";
+  const line = (ok, m) => { const li = document.createElement("li"); li.className = ok ? "ok" : "bad"; li.textContent = (ok ? "\u2713 " : "\u2717 ") + m; out.appendChild(li); return ok; };
+  if (!tok) { line(false, "no token: paste one into the token field"); $("#setmsg").textContent = "Test failed."; return; }
+  line(true, "token present (" + tok.length + " chars, starts with " + tok.slice(0, 11) + "...)" + (/^github_pat_/.test(tok) ? "" : " - not a fine-grained token"));
+  const gh = new GitHub({ owner: o, repo: r, branch: br, token: tok, apiBase: c.apiBase });
+  try {
+    const info = await gh.repoInfo();
+    line(true, "1. repo " + info.full_name + " found (" + (info.private ? "private" : "PUBLIC!") + ", default branch " + info.default_branch + ")");
+    const p = info.permissions || {};
+    if (!line(!!p.push, "2. write access: " + (p.push ? "yes" : "NO - the token needs Contents: Read and write"))) throw null;
+    const head = await gh.headSha(); line(true, "3. branch " + br + " at " + head.slice(0, 10));
+    const cm = await gh.commit(head); line(true, "4. last commit: " + (cm.message || "").split("\n")[0].slice(0, 60));
+    const tr = await gh.tree(cm.tree.sha); const files = (tr.tree || []).filter(x => x.type === "blob");
+    const hasSchema = files.some(x => x.path === "bossboard.json");
+    if (!line(hasSchema, "5. data: " + files.length + " files" + (hasSchema ? ", bossboard.json present" : ", bossboard.json MISSING - is this the data repo?"))) throw null;
+    const saved = c.owner === o && c.repo === r && c.branch === br && (!cleanToken(fd.get("token")) || cleanToken(fd.get("token")) === c.token) && c.token;
+    $("#setmsg").textContent = "Connection OK." + (saved ? "" : " Press Save & sync to use these settings.");
+  } catch (x) {
+    if (x) line(false, x.message || String(x));
+    $("#setmsg").textContent = "Test failed - see the red line above.";
+  }
+}
 function busy() {
   const a = document.activeElement; if ($("#dlg").open || dragId != null) return true; if (!a) return false;
   if (a.closest && a.closest("#setf")) return true;
@@ -317,4 +355,4 @@ function busy() {
   return (a.tagName === "INPUT" && a.type !== "checkbox" || a.tagName === "TEXTAREA") && !!a.value;
 }
 if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
-boot().catch(e => { err("startup failed: " + e.message); });
+boot().catch(e => { window.__bbReady = true; const m = "BossBoard failed to start: " + (e && e.message || e); err(m); if (window.bbShowError) window.bbShowError(m); else showBanner(m); });

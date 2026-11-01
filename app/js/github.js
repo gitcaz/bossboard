@@ -35,9 +35,15 @@ export class GitHub {
     const headers = { "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Authorization": "Bearer " + this.token };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     let r;
+    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), opts.timeout || 30000) : null;
     try {
-      r = await this.fetch(this.base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: opts.cache || "no-store" });
-    } catch (e) { throw new GHError("network", "offline or network error", 0); }
+      r = await this.fetch(this.base + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), cache: opts.cache || "no-store", signal: ctl ? ctl.signal : undefined });
+    } catch (e) {
+      const to = e && e.name === "AbortError";
+      throw new GHError("network", to ? "network: no answer from api.github.com in " + ((opts.timeout || 30000) / 1000) + " s"
+        : "network/CORS error: the request to api.github.com failed before GitHub answered (offline, firewall, proxy, browser extension or CORS)", 0);
+    } finally { if (timer) clearTimeout(timer); }
     const rem = r.headers.get("x-ratelimit-remaining"), reset = r.headers.get("x-ratelimit-reset");
     if (rem != null) this.rate = { remaining: +rem, reset: reset ? +reset * 1000 : null };
     if (r.ok) return r.status === 204 ? null : r.json();
@@ -47,13 +53,16 @@ export class GitHub {
       const until = ra ? Date.now() + (+ra) * 1000 : (reset ? +reset * 1000 : Date.now() + 60000);
       throw new GHError("ratelimit", "GitHub rate limit reached; retrying after " + new Date(until).toLocaleTimeString(), r.status, { until });
     }
-    if (r.status === 401) throw new GHError("auth", "token rejected (expired or invalid) - update it in Settings", 401);
-    if (r.status === 403) throw new GHError("auth", "token lacks access - it needs Contents: Read and write on " + this.owner + "/" + this.repo, 403);
-    if (r.status === 404) throw new GHError("notfound", "repo or branch not found (" + this.owner + "/" + this.repo + "@" + this.branch + "), or the token cannot see it", 404);
-    if (r.status === 409) throw new GHError("empty", "the data repo is empty - push data-template first", 409);
-    if (r.status === 422) throw new GHError("conflict", msg || "update is not a fast forward", 422);
-    throw new GHError("server", "GitHub error " + r.status + (msg ? ": " + msg : ""), r.status);
+    const repo = this.owner + "/" + this.repo, gm = msg ? " (GitHub: " + msg + ")" : "";
+    const need = r.headers.get("x-accepted-github-permissions");
+    if (r.status === 401) throw new GHError("auth", "401 bad token: GitHub rejected it (expired, revoked or mistyped)" + gm + " - paste a new one in Settings", 401);
+    if (r.status === 403) throw new GHError("auth", "403 missing permission on " + repo + (need ? ": needs " + need : ": the token needs Contents: Read and write") + gm, 403);
+    if (r.status === 404) throw new GHError("notfound", "404 not found: " + repo + (path.includes("/git/ref") ? " branch '" + this.branch + "'" : "") + " does not exist or this token has no access to it (fine-grained token must include this repo)" + gm, 404);
+    if (r.status === 409) throw new GHError("empty", "409 the data repo " + repo + " is empty - push data-template first" + gm, 409);
+    if (r.status === 422) throw new GHError("conflict", "422 " + (msg || "update is not a fast forward"), 422);
+    throw new GHError("server", r.status + " GitHub error" + (msg ? ": " + msg : ""), r.status);
   }
+  async repoInfo() { return this.req("GET", this.repoPath); }
   async headSha() { const j = await this.req("GET", this.repoPath + "/git/ref/heads/" + encodeURIComponent(this.branch)); return j.object.sha; }
   async commit(sha) { return this.req("GET", this.repoPath + "/git/commits/" + sha, undefined, { cache: "force-cache" }); }
   async tree(sha) { return this.req("GET", this.repoPath + "/git/trees/" + sha + "?recursive=1", undefined, { cache: "force-cache" }); }

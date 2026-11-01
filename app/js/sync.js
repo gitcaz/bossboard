@@ -125,7 +125,7 @@ export class Engine {
       if (e.kind === "network") {
         // browser online but the request failed: GitHub unreachable (DNS/proxy/firewall/CORS), not "offline"
         const online = typeof navigator === "undefined" || navigator.onLine !== false;
-        this._set("offline", { error: online ? "can't reach api.github.com (network, proxy or firewall); will retry" : null });
+        this._set("offline", { error: online ? "can't reach GitHub - " + e.message + "; retrying in 30 s" : null });
       }
       else if (e.kind === "ratelimit") this._set("ratelimited", { error: e.message, until: e.until });
       else this._set("error", { error: e.message, errorKind: e.kind || "app" });

@@ -94,3 +94,5 @@ header h1{white-space:nowrap}
   .act td{padding:6px 4px}
 }
 .pre{white-space:pre-wrap}.nowrap{white-space:nowrap}
+.setmsg{margin:8px 0 0;font-size:14px}.setmsg.bad{color:var(--bad);font-weight:600}
+.testout{margin:6px 0 0;padding-left:18px}.testout li{margin:2px 0;list-style:none}.testout li.ok{color:var(--ok,#1a7f37)}.testout li.bad{color:var(--bad);font-weight:600}

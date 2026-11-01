@@ -16,9 +16,17 @@ function p(req) { return new Promise((res, rej) => { req.onsuccess = () => res(r
 export class IDBStore {
   constructor(name) { this.name = name; this.db = null; }
   async open() {
+    if (typeof indexedDB === "undefined") throw new Error("this browser has no IndexedDB (private mode?) - BossBoard needs local storage");
     const req = indexedDB.open(this.name, 1);
     req.onupgradeneeded = () => { const db = req.result; db.createObjectStore("files", { keyPath: "path" }); db.createObjectStore("meta"); };
-    this.db = await p(req); return this;
+    this.db = await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error("local database did not open within 10 s - close other BossBoard tabs and reload")), 10000);
+      req.onsuccess = () => { clearTimeout(t); res(req.result); };
+      req.onerror = () => { clearTimeout(t); rej(new Error("local database error: " + (req.error && req.error.message))); };
+      req.onblocked = () => { clearTimeout(t); rej(new Error("local database is blocked by another BossBoard tab - close the other tabs and reload")); };
+    });
+    this.db.onversionchange = () => this.db.close();
+    return this;
   }
   tx(stores, mode) { return this.db.transaction(stores, mode); }
   async allFiles() { return p(this.tx(["files"], "readonly").objectStore("files").getAll()); }
@@ -36,5 +44,9 @@ export class IDBStore {
   }
   async getMeta(k) { return p(this.tx(["meta"], "readonly").objectStore("meta").get(k)); }
   async setMeta(k, v) { return p(this.tx(["meta"], "readwrite").objectStore("meta").put(v, k)); }
-  async clear() { this.db.close(); await p(indexedDB.deleteDatabase(this.name)); }
+  async clear() {
+    this.db.close();
+    await new Promise((res, rej) => { const r = indexedDB.deleteDatabase(this.name); r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+      r.onblocked = () => rej(new Error("cannot clear: another BossBoard tab is open - close it and try again")); });
+  }
 }
