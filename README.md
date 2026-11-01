@@ -42,6 +42,7 @@ screenshots/    smoke-test screenshots (mobile 390x844, desktop 1280x800)
 ```sh
 python3 -m http.server 8000 --directory app          # open http://localhost:8000 (Settings needs a repo + token)
 tests/run_all.sh                                      # all suites; SKIP_SMOKE=1 to skip the browser test
+BOSSBOARD_TOKEN=... node tests/live.playwright.mjs    # read-only check of the deployed app against real GitHub
 python3 tests/fake_github.py --repo /tmp/data.git --port 8787   # fake GitHub on a bare repo, for manual tries
 ```
 
@@ -87,4 +88,7 @@ Planned names: private data repo `gitcaz/bossboard-data`, public code repo `gitc
 * Logs: the app downloads the newest 200 entries (+ everything newer); "Load older" fetches more.
 * Rename of a list that another device renamed concurrently: last rename wins (normal LWW on `name`).
 * A 401/403 pauses automatic sync until the token is fixed or "Sync now" is pressed; rate limits wait for the reset time.
+* Networks whose DNS returns one shared (fake) IP for every host (some VPNs / transparent proxies) can make Chrome
+  reuse the github.io HTTP/2 connection for api.github.com; the CORS preflight then fails (chip: "can't reach GitHub").
+  Normal DNS is unaffected. A custom domain for Pages would avoid it.
 * One GitHub API commit per sync = roughly 3 + changed-file reads per sync; well inside the 5000 req/h limit.

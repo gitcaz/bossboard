@@ -4,7 +4,7 @@ import { GitHub, safeApiBase } from "./github.js";
 import { IDBStore } from "./store.js";
 import { live, listsSorted, tasksSorted, nextUp, todayView, nameOf, handles, dayStr, BBError } from "./core.js";
 
-const VERSION = "3.0.0";
+const VERSION = "3.0.1";
 const $ = s => document.querySelector(s);
 const LS = {
   get: k => localStorage.getItem("bb3." + k) || "",
@@ -44,13 +44,13 @@ async function doSync(manual) {
   catch (e) {
     if (e.kind === "ratelimit") { blockedUntil = e.until || Date.now() + 60000; scheduleSync(Math.max(5000, blockedUntil - Date.now() + 1000)); }
     else if (e.kind === "auth" || e.kind === "notfound" || e.kind === "empty") authBlocked = true;
-    else if (e.kind === "network") { /* wait for 'online' */ }
+    else if (e.kind === "network") { if (navigator.onLine) scheduleSync(30000); /* else wait for 'online' */ }
     else scheduleSync(30000);
   }
   renderStatus(); if (!busy()) render();
 }
 addEventListener("online", () => doSync());
-addEventListener("offline", () => engine && engine._set("offline"));
+addEventListener("offline", () => { if (engine) { engine._set("offline", { error: null }); renderStatus(); } });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) doSync(); });
 setInterval(() => { if (!document.hidden) doSync(); }, 60000);
 $("#sync").onclick = () => { if (!configured()) return setTab("settings"); if (engine.status.state === "error") { authBlocked = false; } doSync(true); };
@@ -61,7 +61,7 @@ function renderStatus() {
   const t = st.lastSync ? new Date(st.lastSync).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   if (!engine.gh) { cls = "unconfigured"; txt = "not connected"; }
   else if (st.state === "syncing") txt = "syncing" + (st.pending ? " (" + st.pending + ")" : "") + "...";
-  else if (st.state === "offline") txt = "offline" + (st.pending ? " · " + st.pending + " pending" : "");
+  else if (st.state === "offline") txt = (st.error ? "can't reach GitHub" : "offline") + (st.pending ? " · " + st.pending + " pending" : "");
   else if (st.state === "error") txt = "sync error" + (st.pending ? " · " + st.pending + " pending" : "");
   else if (st.state === "ratelimited") txt = "rate limited" + (st.pending ? " · " + st.pending + " pending" : "");
   else if (st.pending) { cls = "pending"; txt = "pending " + st.pending; }

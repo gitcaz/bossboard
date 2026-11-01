@@ -1419,6 +1419,8 @@ def cmd_read(a, be):
             return out_json(rows) or 0
         for e in rows:
             print(fmt_act(e))
+        if not rows:
+            print("(no activity)")
         return 0
     if c == "export":
         dump = {"schema_version": SCHEMA_VERSION, "exported_at": now_ts(),

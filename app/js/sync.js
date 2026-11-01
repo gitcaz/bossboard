@@ -122,7 +122,11 @@ export class Engine {
       this._set("idle"); this._updPending(); this.onChange("status");
     } catch (e) {
       this._updPending();
-      if (e.kind === "network") this._set("offline");
+      if (e.kind === "network") {
+        // browser online but the request failed: GitHub unreachable (DNS/proxy/firewall/CORS), not "offline"
+        const online = typeof navigator === "undefined" || navigator.onLine !== false;
+        this._set("offline", { error: online ? "can't reach api.github.com (network, proxy or firewall); will retry" : null });
+      }
       else if (e.kind === "ratelimit") this._set("ratelimited", { error: e.message, until: e.until });
       else this._set("error", { error: e.message, errorKind: e.kind || "app" });
       throw e;
