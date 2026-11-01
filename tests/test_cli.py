@@ -250,6 +250,11 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual((milk["list"], milk["project_name"], milk["due"], milk["priority"]),
                              ("Errands", "Website", "2026-11-05", 2))
             self.assertEqual(next(t for t in tasks if t["title"] == "Garage thing")["notes"], "multi\nline")
+            # attribution comes from the v2.1 activity log, not the migrating user
+            self.assertEqual((milk["created_by"], milk["updated_by"]), ("boss", "boss"))
+            self.assertEqual(by_legacy[1]["updated_by"], "codex")      # done by codex
+            self.assertEqual(by_legacy[2]["updated_by"], "claude")     # started by claude
+            self.assertEqual(next(t for t in tasks if t["title"] == "Garage thing")["created_by"], "codex")
             projects = {p["name"]: p for p in J(run_bb("--dir", out, "projects", "--json"))}
             self.assertEqual(projects["Gateway"]["parent_name"], "Website")
             self.assertEqual(projects["Chatbot"]["status"], "paused")

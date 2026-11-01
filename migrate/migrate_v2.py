@@ -47,8 +47,9 @@ def rows(conn, table):
     return [dict(r) for r in conn.execute("SELECT * FROM %s ORDER BY id" % table)]
 
 
-def record(kind, iid, fields, created, updated, by, legacy):
-    r = {"id": iid, "kind": kind, "created_at": created, "created_by": by, "updated_at": updated, "updated_by": by,
+def record(kind, iid, fields, created, updated, by, legacy, who=None):
+    cb, ub = (who or {}).get((kind, legacy), (by, by))
+    r = {"id": iid, "kind": kind, "created_at": created, "created_by": cb, "updated_at": updated, "updated_by": ub,
          "legacy_id": legacy, "field_ts": {}}
     for f in bb.FIELDS[kind]:
         r[f] = fields.get(f, False if f == "deleted" else None)
@@ -71,6 +72,19 @@ def migrate(db, out, by="migrate", now=None):
             if i not in used_ids:
                 used_ids.add(i)
                 return i
+
+    # attribution from the v2.1 activity log: created_by = who created it, updated_by = who touched it last
+    who, created_seen = {}, set()
+    for a in rows(conn, "activity"):
+        ent, old, w = a.get("entity"), a.get("entity_id"), (a.get("who") or "user").lower()
+        if ent in ("task", "project", "resource") and old is not None:
+            k = (ent, old)
+            cb = who[k][0] if k in who else w            # first actor seen ...
+            if a.get("action") == "create" and k not in created_seen:
+                cb = w                                    # ... unless there is an explicit create row
+                created_seen.add(k)
+            who[k] = (cb, w)                              # last actor = updated_by
+    who = {k: (v[0] or by, v[1] or by) for k, v in who.items()}
 
     # lists: table rows + any names only used by tasks
     list_ids, lists = {}, []
@@ -106,7 +120,7 @@ def migrate(db, out, by="migrate", now=None):
         f = {k: p.get(k) for k in ("name", "description", "owner", "status", "notes")}
         f["parent_id"] = pid.get(p.get("parent_id"))
         f["deleted"] = False
-        files[bb.path_for("project", pid[p["id"]])] = record("project", pid[p["id"]], f, c, u, by, p["id"])
+        files[bb.path_for("project", pid[p["id"]])] = record("project", pid[p["id"]], f, c, u, by, p["id"], who)
 
     res = rows(conn, "resources")
     rid = {r["id"]: nid() for r in res}
@@ -116,7 +130,7 @@ def migrate(db, out, by="migrate", now=None):
         f = {k: r.get(k) for k in ("name", "type", "host", "provider", "os", "ports", "status", "notes")}
         f["project_id"] = pid.get(r.get("project_id"))
         f["deleted"] = False
-        files[bb.path_for("resource", rid[r["id"]])] = record("resource", rid[r["id"]], f, c, u, by, r["id"])
+        files[bb.path_for("resource", rid[r["id"]])] = record("resource", rid[r["id"]], f, c, u, by, r["id"], who)
 
     tid = {t["id"]: nid() for t in tasks}
     for t in tasks:
@@ -135,7 +149,7 @@ def migrate(db, out, by="migrate", now=None):
              "deleted": False}
         if f["status"] != "done":
             f["completed_at"] = None
-        files[bb.path_for("task", tid[t["id"]])] = record("task", tid[t["id"]], f, c, u, by, t["id"])
+        files[bb.path_for("task", tid[t["id"]])] = record("task", tid[t["id"]], f, c, u, by, t["id"], who)
 
     maps = {"task": tid, "project": pid, "resource": rid}
     nlog = 0
