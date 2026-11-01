@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 node_modules/
 .cache/
+
+# private data (real v2.1 DB, real-data screenshots) - never in the public repo
+import/
+*.db
+*.db-wal
+*.db-shm
