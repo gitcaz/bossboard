@@ -1,4 +1,4 @@
-# BossBoard v3
+# BossBoard (by Grok) v3
 
 Offline-first task / project / DevOps-inventory board. v3 drops the local server: the **source of truth is a private
 GitHub repo of JSON files**, the UI is a **static PWA on GitHub Pages**, and agents write through a **stdlib-only Python CLI**.
@@ -43,11 +43,11 @@ screenshots/    smoke-test screenshots (mobile 390x844, desktop 1280x800)
 python3 -m http.server 8000 --directory app          # open http://localhost:8000 (Settings needs a repo + token)
 tests/run_all.sh                                      # all suites; SKIP_SMOKE=1 to skip the browser test
 BOSSBOARD_TOKEN=... node tests/live.playwright.mjs    # read-only check of the deployed app against real GitHub
-python3 tests/fake_github.py --repo /tmp/data.git --port 8787   # fake GitHub on a bare repo, for manual tries
+python3 tests/fake_github.py --repo /tmp/data.git --port 8787 --token github_pat_fake_token   # fake GitHub on a bare repo, for manual tries
 ```
 
 To point the app at the fake: in the browser console `localStorage.setItem("bb3.apiBase","http://127.0.0.1:8787")`, then
-use owner `o`, repo `data`, token `fake_token` in Settings.
+use owner `o`, repo `data`, token `github_pat_fake_token` in Settings (the web app only accepts fine-grained `github_pat_` tokens).
 
 ## Deploy (needs GitHub credentials)
 

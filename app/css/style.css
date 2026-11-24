@@ -6,7 +6,7 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark}}
 *{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg)}
 header{display:flex;align-items:center;gap:12px;padding:10px 18px;border-bottom:1px solid var(--bd);background:var(--card);position:sticky;top:0;z-index:5;flex-wrap:wrap}
-header h1{font-size:17px;margin:0 10px 0 0}nav{display:flex;gap:4px;flex-wrap:wrap}
+header h1{font-size:17px;margin:0 10px 0 0;display:flex;align-items:baseline;gap:6px}nav{display:flex;gap:4px;flex-wrap:wrap}
 nav button{background:none;border:1px solid transparent;color:var(--mut);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:14px}
 nav button.on{color:var(--fg);border-color:var(--bd);background:var(--hl)}
 nav .cnt{font-size:11px;background:var(--bad);color:#fff;border-radius:99px;padding:0 6px;margin-left:4px}
@@ -68,7 +68,8 @@ header h1{white-space:nowrap}
 @media (max-width:720px){
   body{font-size:15px}
   header{padding:8px 10px;gap:8px}
-  header h1{font-size:16px;margin:0}
+  header h1{font-size:15px;margin:0}
+  header h1 .by{font-size:10px}
   nav{order:10;width:100%;flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin:0 -2px}
   nav::-webkit-scrollbar{display:none}
   nav button{flex:0 0 auto;padding:8px 12px}
@@ -96,3 +97,16 @@ header h1{white-space:nowrap}
 .pre{white-space:pre-wrap}.nowrap{white-space:nowrap}
 .setmsg{margin:8px 0 0;font-size:14px}.setmsg.bad{color:var(--bad);font-weight:600}
 .testout{margin:6px 0 0;padding-left:18px}.testout li{margin:2px 0;list-style:none}.testout li.ok{color:var(--ok,#1a7f37)}.testout li.bad{color:var(--bad);font-weight:600}
+
+header h1 .by{font-size:11px;font-weight:600;color:var(--mut)}
+.viewbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.pgroup{margin:2px 0}
+.ghead{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;flex:1;min-width:0;width:auto;text-align:left;background:transparent;border:1px solid transparent;border-radius:8px;padding:6px 6px;cursor:pointer;font:inherit;font-weight:600;color:var(--fg)}
+.ghead:hover{background:var(--hl);border-color:var(--bd)}
+.ghead .chev{width:1em;color:var(--mut);font-size:12px;flex:0 0 auto}
+.ghead .gtitle{flex:1 1 8rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ghead .pill,.ghead .hdl{flex:0 0 auto}
+.gbody{margin:2px 0 6px 8px;padding-left:12px;border-left:2px solid var(--bd)}
+.ptree .card{margin-bottom:8px}
+.pgroup .card{margin-bottom:8px}
+.gheadrow{display:flex;align-items:flex-start;gap:4px}.gheadrow .ghead{flex:1;min-width:0;width:auto}.gheadrow > button.ic{flex:0 0 auto;margin-top:4px}

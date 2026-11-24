@@ -35,8 +35,9 @@ export async function fakeCtl(api, what, body) {
 }
 
 /** run the Python CLI against the fake via the REST backend */
-export function cli(api, args, cacheDir) {
-  const env = { ...process.env, BOSSBOARD_REPO: "o/data", BOSSBOARD_TOKEN: "fake_token", BOSSBOARD_API: api, BOSSBOARD_CACHE: cacheDir };
+export function cli(api, args, cacheDir, token = "fake_token") {
+  const env = { ...process.env, BOSSBOARD_REPO: "o/data", BOSSBOARD_TOKEN: token, BOSSBOARD_API: api, BOSSBOARD_CACHE: cacheDir };
   delete env.BOSSBOARD_DIR;
+  delete env.GITHUB_TOKEN;  // never send the real token to the fake
   return execFileSync("python3", [path.join(ROOT, "cli", "bb.py"), ...args], { env, encoding: "utf8" });
 }

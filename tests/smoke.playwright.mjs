@@ -32,11 +32,12 @@ v2("add-resource", "example.org", "-t", "domain", "-p", "Website", "--provider",
 execFileSync("python3", [path.join(ROOT, "migrate", "migrate_v2.py"), "--db", path.join(tmp, "v2.db"), "--out", out, "--git"], { stdio: "ignore" });
 git(["init", "-q", "--bare", "-b", "main", bare]); git(["push", "-q", bare, "main"], out);
 
-const fake = await startFake(bare);
+const TOK = "github_pat_fake_token";
+const fake = await startFake(bare, 0, TOK);
 const webPort = await freePort();
 const web = spawn("python3", ["-m", "http.server", String(webPort), "--bind", "127.0.0.1", "--directory", path.join(ROOT, "app")], { stdio: "ignore" });
 await new Promise(r => setTimeout(r, 700));
-cli(fake.api, ["start", "7", "--by", "claude"], cache);  // task #7 in progress -> Next up
+cli(fake.api, ["start", "7", "--by", "claude"], cache, TOK);  // task #7 in progress -> Next up
 const APP = "http://127.0.0.1:" + webPort + "/";
 mkdirSync(SHOTS, { recursive: true });
 
@@ -60,12 +61,15 @@ try {
     check(await page.inputValue("input[name=owner]") === "gitcaz" && await page.inputValue("input[name=repo]") === "bossboard-data" && await page.inputValue("input[name=branch]") === "main", "owner/repo/branch prefilled as real values");
     await page.click("#setf button.pri"); await page.waitForTimeout(300);
     check(/Missing: Fine-grained token/.test(await page.locator("#setmsg").innerText()), "Save without token -> inline 'Missing: Fine-grained token'");
-    await page.fill("input[name=owner]", "o"); await page.fill("input[name=repo]", "data"); await page.fill("input[name=token]", "fake_token");
+    await page.fill("input[name=token]", "ghp_" + "A".repeat(36));
+    await page.click("#setf button.pri"); await page.waitForTimeout(300);
+    check(/Classic personal access tokens/.test(await page.locator("#setmsg").innerText()), "classic ghp_ token is refused");
+    await page.fill("input[name=owner]", "o"); await page.fill("input[name=repo]", "data"); await page.fill("input[name=token]", TOK);
     await page.selectOption("#who", "boss");
     await Promise.all([page.waitForNavigation(), page.click("#setf button.pri")]);
     await page.waitForFunction(() => document.querySelector("#sync").classList.contains("synced"), null, { timeout: 15000 });
     check(true, "Save & sync -> chip 'synced'");
-    check(await page.evaluate(() => localStorage.getItem("bb3.token")) === "fake_token", "token stored in this device's localStorage");
+    check(await page.evaluate(t => localStorage.getItem("bb3.token") === t, TOK), "token stored in this device's localStorage");
     const nextTitle = await page.locator(".card.big .next").innerText();
     check(nextTitle.includes("Configure API gateway"), "Next up shows the in-progress task: " + nextTitle);
     const projSize = await page.evaluate(() => { const e = document.querySelector(".nextproj"); return e ? parseFloat(getComputedStyle(e).fontSize) : 0; });
@@ -73,6 +77,8 @@ try {
     check(projSize >= 20, "Next up project name is big (" + projSize + "px, title " + titleSize + "px)");
     check((await page.locator(".nextproj").innerText()).includes("Gateway"), "Next up shows the project name");
     check(await page.locator(".rowproj").count() > 0, "'After that' rows show project names");
+    check((await page.title()) === "BossBoard (by Grok)", "document title is BossBoard (by Grok)");
+    check(/BossBoard\s*\(by Grok\)/.test(await page.locator("header h1").textContent()), "header title is BossBoard (by Grok)");
     const rendered = [];
     for (const t of TABS) {
       await page.evaluate(t => { location.hash = "#" + t; }, t);
@@ -86,6 +92,61 @@ try {
     // show done + reopen exists
     const sd = page.locator('[data-a=showdone]').first();
     if (await sd.count()) { await sd.click(); check(await page.locator(".row.done [data-a=reopen]").count() > 0, "Show done reveals done tasks with Reopen"); }
+
+    // ---- v3.1 grouping
+    await page.evaluate(() => { location.hash = "#tasks"; });
+    await page.waitForSelector("#addtask");
+    check(await page.locator(".ghead").count() > 0, "Tasks view groups by project tree by default");
+    const work = page.locator(".droplist").filter({ hasText: "Work" }).first();
+    check(await work.locator(".ghead", { hasText: "Website" }).count() > 0, "Work list has a Website group");
+    check(await work.locator(".ghead", { hasText: "Gateway" }).count() > 0, "Gateway appears in the Work tree");
+    check(await work.locator(".ghead", { hasText: "Chatbot" }).count() > 0, "Chatbot appears in the Work tree");
+    const nested2 = await work.evaluate(el => {
+      const title = e => (e.querySelector(".gtitle") || e).textContent.trim();
+      const w = [...el.querySelectorAll(".ghead")].find(e => title(e) === "Website");
+      if (!w) return false;
+      const heads = [...w.closest(".pgroup").querySelectorAll(".gbody .ghead")].map(title);
+      return heads.includes("Gateway") && heads.includes("Chatbot");
+    });
+    check(nested2, "Gateway and Chatbot are nested under Website in Work");
+    check(await page.locator(".droplist").filter({ hasText: "Errands" }).locator(".ghead", { hasText: "No project" }).count() > 0, "Errands has a No project group");
+    check(await work.locator(".ghead", { hasText: "Website" }).innerText().then(t => /\d+ open/.test(t)), "group headers show open counts");
+    await work.locator(".ghead", { hasText: "Website" }).click();
+    check(await work.locator("text=Configure API gateway").count() === 0, "collapsing Website hides descendant tasks");
+    check(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("bb3.collapsed") || "{}")).some(k => k.startsWith("t:"))), "collapsed project group remembered in localStorage");
+    await page.click('[data-a="expand-all"][data-scope="tasks"]');
+    check(await work.locator("text=Configure API gateway").count() > 0, "Expand all reveals descendant tasks again");
+    await page.click('[data-a="collapse-all"][data-scope="tasks"]');
+    check(await work.locator("text=Configure API gateway").count() === 0, "Collapse all hides grouped tasks");
+    await page.click('[data-a="expand-all"][data-scope="tasks"]');
+    await page.click('[data-a="toggle-group-tasks"]');
+    check(await page.locator(".droplist .ghead").count() === 0, "Group by project can be turned off (flat list)");
+    check(await page.locator("text=Configure API gateway").count() > 0, "flat list still shows tasks");
+    check(await page.evaluate(() => localStorage.getItem("bb3.groupTasks") === "0"), "grouping-off pref stored");
+    await page.click('[data-a="toggle-group-tasks"]');
+    check(await page.locator(".droplist .ghead").count() > 0, "grouping can be turned back on");
+    await page.screenshot({ path: path.join(SHOTS, vp.name + "-tasks-grouped.png"), fullPage: true });
+
+    await page.evaluate(() => { location.hash = "#projects"; });
+    await page.waitForTimeout(250);
+    check(await page.locator('[data-a="proj-mode"][data-m="tree"].on').count() > 0, "Projects view defaults to By hierarchy");
+    const treeNest = await page.evaluate(() => {
+      const title = e => (e.querySelector(".gtitle") || e).textContent.trim();
+      const w = [...document.querySelectorAll(".ptree .ghead")].find(e => title(e) === "Website");
+      if (!w) return false;
+      const heads = [...w.closest(".pgroup").querySelectorAll(".gbody .ghead")].map(title);
+      return heads.includes("Gateway") && heads.includes("Chatbot");
+    });
+    check(treeNest, "Projects hierarchy nests Chatbot and Gateway under Website");
+    await page.screenshot({ path: path.join(SHOTS, vp.name + "-projects-tree.png"), fullPage: true });
+    await page.click('[data-a="proj-mode"][data-m="list"]');
+    check(await page.evaluate(() => localStorage.getItem("bb3.projMode") === "list"), "By list pref stored");
+    check(await page.locator(".ghead", { hasText: "Work" }).count() > 0, "By list groups projects under Work");
+    check(await page.locator(".ghead", { hasText: "Errands" }).count() > 0, "By list groups projects under Errands");
+    await page.screenshot({ path: path.join(SHOTS, vp.name + "-projects-list.png"), fullPage: true });
+    await page.click('[data-a="proj-mode"][data-m="tree"]');  // restore default for later shots
+    await page.evaluate(() => { location.hash = "#tasks"; });
+    await page.waitForSelector("#addtask");
 
     if (vp.name === "mobile") {
       // offline: add a task, see pending, back online -> synced and in the repo
@@ -107,13 +168,13 @@ try {
       await page.evaluate(() => dispatchEvent(new Event("online")));
       await page.waitForFunction(() => document.querySelector("#sync").classList.contains("synced"), null, { timeout: 15000 });
       check(true, "back online -> synced");
-      const repo = JSON.parse(cli(fake.api, ["list", "--json"], cache));
+      const repo = JSON.parse(cli(fake.api, ["list", "--json"], cache, TOK));
       const t = repo.find(x => x.title === "Offline task from phone");
       check(t && t.priority === 1, "offline task reached the data repo");
-      const log = JSON.parse(cli(fake.api, ["log", "-n", "3", "--json"], cache));
+      const log = JSON.parse(cli(fake.api, ["log", "-n", "3", "--json"], cache, TOK));
       check(log.some(e => e.by === "boss" && e.via === "web"), "web edit logged with by=boss via=web");
       // agent writes via CLI -> phone sees it after a sync
-      cli(fake.api, ["add", "Agent added this", "-l", "Home", "-p", "Website", "--by", "codex"], cache);
+      cli(fake.api, ["add", "Agent added this", "-l", "Home", "-p", "Website", "--by", "codex"], cache, TOK);
       await page.click("#sync");
       await page.waitForTimeout(800);
       await page.evaluate(() => { location.hash = "#tasks"; });
@@ -130,12 +191,12 @@ try {
       await page.waitForSelector("#dlg[open]");
       await page.screenshot({ path: path.join(SHOTS, "desktop-edit-dialog.png") });
       await page.click("#dform button[value=cancel]");
-      await page.evaluate(() => localStorage.setItem("bb3.token", "fake_wrong"));
+      await page.evaluate(() => localStorage.setItem("bb3.token", "github_pat_wrong"));
       await page.reload();
       await page.waitForFunction(() => document.querySelector("#sync").classList.contains("error"), null, { timeout: 15000 });
       check(/401 bad token/.test(await page.locator("#banner").innerText()), "bad token -> error banner with Settings link");
       await page.screenshot({ path: path.join(SHOTS, "desktop-bad-token.png") });
-      await page.evaluate(() => localStorage.setItem("bb3.token", "fake_token"));
+      await page.evaluate(t => localStorage.setItem("bb3.token", t), TOK);
     }
     check(errors.length === 0, "no page errors / CSP violations" + (errors.length ? ": " + errors.join(" | ") : ""));
     await ctx.close();

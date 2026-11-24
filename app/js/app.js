@@ -4,7 +4,7 @@ import { GitHub, safeApiBase } from "./github.js";
 import { IDBStore } from "./store.js";
 import { live, listsSorted, tasksSorted, nextUp, todayView, nameOf, handles, dayStr, BBError } from "./core.js";
 
-const VERSION = "3.0.2";
+const VERSION = "3.1.0";
 const DEFAULTS = { owner: "gitcaz", repo: "bossboard-data", branch: "main" };  // empty fields fall back to these
 const $ = s => document.querySelector(s);
 const LS = {
@@ -14,6 +14,10 @@ const LS = {
 const TABS = ["next", "today", "tasks", "projects", "inventory", "activity", "settings"];
 let tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : (LS.get("tab") || "next");
 let showDone = JSON.parse(LS.get("showDone") || "{}"), dragId = null, engine = null, S = null;
+let groupTasks = LS.get("groupTasks") !== "0";                 // default ON
+let projMode = LS.get("projMode") === "list" ? "list" : "tree";
+let collapsed = {};
+try { collapsed = JSON.parse(LS.get("collapsed") || "{}") || {}; } catch (e) { collapsed = {}; }
 let blockedUntil = 0, authBlocked = false, syncTimer = null, testMsg = "";
 
 $("#who").value = LS.get("who") || "user";
@@ -23,13 +27,19 @@ $("#theme").onclick = () => { const d = document.documentElement; const dark = d
 
 function esc(s) { return s == null ? "" : String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function err(m) { const e = $("#err"); e.textContent = m; e.style.display = "block"; clearTimeout(err.t); err.t = setTimeout(() => e.style.display = "none", 6000); }
-function cfg() { return { owner: LS.get("owner") || DEFAULTS.owner, repo: LS.get("repo") || DEFAULTS.repo, branch: LS.get("branch") || DEFAULTS.branch, token: LS.get("token"), apiBase: safeApiBase(LS.get("apiBase")) }; }
 function cleanToken(t) { return (t || "").replace(/^\s*(bearer|token)\s+/i, "").replace(/\s+/g, ""); }  // pasted with spaces/newlines/prefix
+function fineToken(t) { t = cleanToken(t); return /^github_pat_/.test(t) ? t : ""; }  // classic ghp_ tokens are refused
+function cfg() { return { owner: LS.get("owner") || DEFAULTS.owner, repo: LS.get("repo") || DEFAULTS.repo, branch: LS.get("branch") || DEFAULTS.branch, token: fineToken(LS.get("token")), apiBase: safeApiBase(LS.get("apiBase")) }; }
 function showBanner(msg, withButtons) { const b = $("#banner"); b.style.display = "block"; b.innerHTML = esc(msg) + (withButtons ? ' <button data-tab="settings">Settings</button> <button data-a="sync-now">Retry</button>' : ""); }
 function configured() { const c = cfg(); return !!(c.owner && c.repo && c.token); }
 
 // ------------------------------------------------------------------ engine
 async function boot() {
+  if (window.__bbFramed || window.top !== window.self) {
+    window.__bbReady = true;
+    document.body.innerHTML = '<main style="padding:2rem;max-width:36rem;margin:10vh auto;font:16px/1.5 system-ui,sans-serif"><h1>BossBoard (by Grok)</h1><p>This app cannot run inside another site. Open it at its own address.</p></main>';
+    return;
+  }
   const c = cfg(), connecting = LS.get("connect") === "1"; LS.set("connect", "");
   const key = "bossboard3:" + (c.owner && c.repo ? c.owner + "/" + c.repo : "_local");
   engine = new Engine({ store: new IDBStore(key), gh: configured() ? new GitHub(c) : null, via: "web", onChange: onEngine });
@@ -125,7 +135,7 @@ function rNext() {
     h += '<div class="mut small">' + (n.status === "doing" ? "IN PROGRESS" : "NEXT UP") + ' &middot; ' + esc(lname(n.list_id)) + '<span class="hdl" title="handle for the CLI: bb done ' + esc(S.th[n.id]) + '">' + esc(S.th[n.id]) + '</span></div><div class="next">' + esc(n.title) + '</div>' +
       (pn ? '<div class="nextproj"><span class="lab">Project</span>' + esc(pn) + '</div>' : "") +
       '<div>' + pill(n, { noProj: true }) + '</div>' + (n.notes ? '<p class="mut pre">' + esc(n.notes) + '</p>' : "") +
-      '<p><button class="pri" data-a="done" data-id="' + n.id + '">&#10003; Done</button> ' + (n.status !== "doing" ? '<button data-a="start" data-id="' + n.id + '">Start</button> ' : '<button data-a="reopen" data-id="' + n.id + '">Pause</button> ') + '<button data-a="edit-task" data-id="' + n.id + '">Edit</button></p>';
+      '<p><button class="pri" data-a="done" data-id="' + esc(n.id) + '">&#10003; Done</button> ' + (n.status !== "doing" ? '<button data-a="start" data-id="' + esc(n.id) + '">Start</button> ' : '<button data-a="reopen" data-id="' + esc(n.id) + '">Pause</button> ') + '<button data-a="edit-task" data-id="' + esc(n.id) + '">Edit</button></p>';
   }
   h += '</div><div class="card"><h2>After that</h2>';
   const up = S.upcoming.slice(1); h += up.length ? up.map(t => taskRow(t, { list: true, noMove: true, bigProj: true })).join("") : '<div class="empty">nothing else open</div>';
@@ -138,58 +148,198 @@ function rToday() {
 }
 function taskRow(t, o) {
   o = o || {}; const done = t.status === "done"; const pn = o.bigProj ? pname(t.project_id) : "";
-  return '<div class="row' + (done ? " done" : "") + '"' + (o.noMove ? "" : ' draggable="true"') + ' data-tid="' + t.id + '" data-list="' + esc(t.list_id) + '">' +
-    (o.noMove ? "" : '<span class="handle" title="drag to reorder / move to another list">&#8942;&#8942;</span>') + '<input type="checkbox" title="' + (done ? "reopen" : "mark done") + '" data-a="toggle" data-id="' + t.id + '"' + (done ? " checked" : "") + '>' +
-    '<div class="t"><span class="tt">' + esc(t.title) + '</span>' + pill(t, { list: o.list, noProj: !!pn }) + '<span class="hdl">' + esc(S.th[t.id]) + '</span>' + (pn ? '<div class="rowproj">' + esc(pn) + '</div>' : "") + (t.notes ? '<div class="nt">' + esc(t.notes) + '</div>' : "") + '</div>' +
-    (done ? '<button class="ic" data-a="reopen" data-id="' + t.id + '">&#8634; Reopen</button>' :
-      (t.status === "todo" ? '<button class="ic" data-a="start" data-id="' + t.id + '" title="start">&#9654;</button>' : '<button class="ic" data-a="reopen" data-id="' + t.id + '" title="pause (back to todo)">&#10073;&#10073;</button>') +
-      (o.noMove ? "" : '<button class="ic" data-a="up" data-id="' + t.id + '" title="move up">&#8593;</button><button class="ic" data-a="down" data-id="' + t.id + '" title="move down">&#8595;</button>')) +
-    '<button class="ic" data-a="edit-task" data-id="' + t.id + '">edit</button><button class="ic del" data-a="del-task" data-id="' + t.id + '">&#10005;</button></div>';
+  return '<div class="row' + (done ? " done" : "") + '"' + (o.noMove ? "" : ' draggable="true"') + ' data-tid="' + esc(t.id) + '" data-list="' + esc(t.list_id) + '">' +
+    (o.noMove ? "" : '<span class="handle" title="drag to reorder / move to another list">&#8942;&#8942;</span>') + '<input type="checkbox" title="' + (done ? "reopen" : "mark done") + '" data-a="toggle" data-id="' + esc(t.id) + '"' + (done ? " checked" : "") + '>' +
+    '<div class="t"><span class="tt">' + esc(t.title) + '</span>' + pill(t, { list: o.list, noProj: o.noProj || !!pn }) + '<span class="hdl">' + esc(S.th[t.id]) + '</span>' + (pn ? '<div class="rowproj">' + esc(pn) + '</div>' : "") + (t.notes ? '<div class="nt">' + esc(t.notes) + '</div>' : "") + '</div>' +
+    (done ? '<button class="ic" data-a="reopen" data-id="' + esc(t.id) + '">&#8634; Reopen</button>' :
+      (t.status === "todo" ? '<button class="ic" data-a="start" data-id="' + esc(t.id) + '" title="start">&#9654;</button>' : '<button class="ic" data-a="reopen" data-id="' + esc(t.id) + '" title="pause (back to todo)">&#10073;&#10073;</button>') +
+      (o.noMove ? "" : '<button class="ic" data-a="up" data-id="' + esc(t.id) + '" title="move up">&#8593;</button><button class="ic" data-a="down" data-id="' + esc(t.id) + '" title="move down">&#8595;</button>')) +
+    '<button class="ic" data-a="edit-task" data-id="' + esc(t.id) + '">edit</button><button class="ic del" data-a="del-task" data-id="' + esc(t.id) + '">&#10005;</button></div>';
 }
 function listSel(name, sel) {
   return '<select name="' + name + '" data-listsel data-prev="' + esc(sel || "") + '">' + S.lists.map(l => '<option value="' + esc(l.id) + '"' + (l.id === sel ? " selected" : "") + '>' + esc(l.name) + '</option>').join("") + '<option value="__new__">New list&hellip;</option></select>';
 }
-function projOpts(sel, exclude) { return '<option value="">(no project)</option>' + S.projects.map(p => '<option value="' + p.id + '"' + (p.id === sel ? " selected" : "") + (p.id === exclude ? " disabled" : "") + '>' + esc(p.name) + '</option>').join(""); }
+function projOpts(sel, exclude) { return '<option value="">(no project)</option>' + S.projects.map(p => '<option value="' + esc(p.id) + '"' + (p.id === sel ? " selected" : "") + (p.id === exclude ? " disabled" : "") + '>' + esc(p.name) + '</option>').join(""); }
 function curList() { const l = LS.get("list"); return S.lists.some(x => x.id === l) ? l : (S.lists[0] ? S.lists[0].id : ""); }
+
+function saveCollapsed() { const j = JSON.stringify(collapsed); LS.set("collapsed", j === "{}" ? "" : j); }
+function isCol(k) { return !!collapsed[k]; }
+function flipCol(k) { if (collapsed[k]) delete collapsed[k]; else collapsed[k] = 1; saveCollapsed(); render(); }
+function setCols(keys, on) { keys.forEach(k => { if (on) collapsed[k] = 1; else delete collapsed[k]; }); saveCollapsed(); render(); }
+function childrenOf(pid) {
+  return S.projects.filter(p => (p.parent_id || null) === (pid || null))
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || (a.id < b.id ? -1 : 1));
+}
+function ancestorsOf(id) {
+  const out = []; let cur = id, seen = new Set();
+  while (cur && !seen.has(cur)) { seen.add(cur); const p = S.projects.find(x => x.id === cur); if (!p) break; out.unshift(p); cur = p.parent_id; }
+  return out;
+}
+function treeOf(idSet) {
+  const needed = new Set();
+  idSet.forEach(id => ancestorsOf(id).forEach(p => needed.add(p.id)));
+  function node(id) { return { id, project: S.projects.find(p => p.id === id), children: childrenOf(id).filter(c => needed.has(c.id)).map(c => node(c.id)) }; }
+  return S.projects.filter(p => needed.has(p.id) && !needed.has(p.parent_id))
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || (a.id < b.id ? -1 : 1))
+    .map(p => node(p.id));
+}
+function tasksFor(pid, list) { return list.filter(t => t.project_id === pid); }
+function walkCount(n, list, pred) { return tasksFor(n.id, list).filter(pred).length + n.children.reduce((s, c) => s + walkCount(c, list, pred), 0); }
+function collectTreeKeys(n, prefix) { return [prefix + n.id].concat(n.children.flatMap(c => collectTreeKeys(c, prefix))); }
+function gHead(key, title, pills, extra) {
+  const c = isCol(key);
+  const btn = '<button type="button" class="ghead" data-a="toggle-group" data-k="' + esc(key) + '" aria-expanded="' + (!c) + '">' +
+    '<span class="chev" aria-hidden="true">' + (c ? "\u25b8" : "\u25be") + '</span><span class="gtitle">' + esc(title) + '</span>' +
+    (pills || "") + '</button>';
+  return extra ? '<div class="gheadrow">' + btn + extra + '</div>' : btn;
+}
+function countPills(open, total) {
+  return '<span class="pill">' + open + ' open' + (total > open ? " / " + total : "") + '</span>';
+}
+function taskGroupsFor(lid, all) {
+  const assigned = new Set(), none = [];
+  for (const t of all) { if (t.project_id && pname(t.project_id)) assigned.add(t.project_id); else none.push(t); }
+  return { roots: treeOf(assigned), none };
+}
+function listGroups() {
+  const known = new Set(S.lists.map(l => l.id));
+  const groups = S.lists.map(l => [l.id, l.name, S.tasks.filter(t => t.list_id === l.id)]);
+  const orphans = S.tasks.filter(t => !known.has(t.list_id));
+  if (orphans.length) groups.push(["", "(no list)", orphans]);
+  return groups;
+}
+function allGroupKeys(scope) {
+  if (scope === "tasks") {
+    const keys = [];
+    for (const [lid, , all] of listGroups()) {
+      const { roots, none } = taskGroupsFor(lid, all);
+      roots.forEach(n => collectTreeKeys(n, "t:" + lid + ":").forEach(k => keys.push(k)));
+      if (none.length) keys.push("t:" + lid + ":_none");
+    }
+    return keys;
+  }
+  if (projMode === "tree") return S.projects.map(p => "p:" + p.id);
+  const keys = [], seen = new Set();
+  for (const l of S.lists) {
+    const ids = new Set(S.tasks.filter(t => t.list_id === l.id && t.project_id && pname(t.project_id)).map(t => t.project_id));
+    if (!ids.size) continue;
+    keys.push("pl:" + l.id);
+    treeOf(ids).forEach(n => collectTreeKeys(n, "pl:" + l.id + ":").forEach(k => keys.push(k)));
+    ids.forEach(id => ancestorsOf(id).forEach(p => seen.add(p.id)));
+  }
+  const unused = S.projects.filter(p => !seen.has(p.id));
+  if (unused.length) { keys.push("pl:_none"); treeOf(new Set(unused.map(p => p.id))).forEach(n => collectTreeKeys(n, "pl:_none:").forEach(k => keys.push(k))); }
+  return keys;
+}
+
 function rTasks() {
   const anyDone = S.tasks.some(t => t.status === "done"); const allOn = S.lists.length && S.lists.every(l => showDone[l.id]);
   let h = '<div class="card"><form class="addf" id="addtask"><input name="title" placeholder="New task&hellip;" required autocomplete="off">' + listSel("list_id", curList()) +
     '<input type="date" name="due" title="due date (optional)">' +
     '<select name="project_id">' + projOpts(null) + '</select><select name="priority" title="priority"><option value="1">P1</option><option value="2">P2</option><option value="3" selected>P3</option><option value="4">P4</option><option value="5">P5</option></select>' +
     '<button class="pri">Add</button></form><span class="small mut">Lists are contexts (where/what), dates go in Due. </span>' +
-    '<button class="ic" data-a="newlist">+ list</button> ' + (anyDone ? '<button class="ic' + (allOn ? " on" : "") + '" data-a="alldone">' + (allOn ? "Hide" : "Show") + ' done in all lists</button>' : "") + '</div>';
+    '<button class="ic" data-a="newlist">+ list</button> ' + (anyDone ? '<button class="ic' + (allOn ? " on" : "") + '" data-a="alldone">' + (allOn ? "Hide" : "Show") + ' done in all lists</button>' : "") +
+    '<div class="viewbar"><button type="button" class="ic' + (groupTasks ? " on" : "") + '" data-a="toggle-group-tasks">' + (groupTasks ? "Grouped by project" : "Group by project") + '</button>' +
+    (groupTasks ? '<button type="button" class="ic" data-a="expand-all" data-scope="tasks">Expand all</button><button type="button" class="ic" data-a="collapse-all" data-scope="tasks">Collapse all</button>' : "") + '</div></div>';
   if (!S.lists.length) h += '<div class="card empty">No lists yet.</div>';
-  const known = new Set(S.lists.map(l => l.id));
-  const orphans = S.tasks.filter(t => !known.has(t.list_id));
-  const groups = S.lists.map(l => [l.id, l.name, S.tasks.filter(t => t.list_id === l.id)]);
-  if (orphans.length) groups.push(["", "(no list)", orphans]);
+  const groups = listGroups();
+  function taskBranch(n, lid, all, showD) {
+    const key = "t:" + lid + ":" + n.id, openN = walkCount(n, all, t => t.status !== "done"), tot = walkCount(n, all, () => true);
+    const mine = tasksFor(n.id, all), open = mine.filter(t => t.status !== "done"), done = mine.filter(t => t.status === "done");
+    let body = open.map(t => taskRow(t, { noProj: true })).join("");
+    if (showD && done.length) body += '<div class="donehdr">Done</div>' + done.map(t => taskRow(t, { noProj: true })).join("");
+    body += n.children.map(c => taskBranch(c, lid, all, showD)).join("");
+    if (!body) body = '<div class="empty">' + (done.length ? "all done" : "no tasks") + '</div>';
+    return '<div class="pgroup">' + gHead(key, n.project.name, countPills(openN, tot)) + (isCol(key) ? "" : '<div class="gbody">' + body + '</div>') + '</div>';
+  }
   for (const [lid, lnm, all] of groups) {
     const open = all.filter(t => t.status !== "done"); const done = all.filter(t => t.status === "done");
     h += '<div class="card droplist" data-list="' + esc(lid) + '"><h3>' + esc(lnm) + ' <span class="pill">' + open.length + ' open</span><span class="sp"></span>' +
       (done.length ? '<button class="ic' + (showDone[lid] ? " on" : "") + '" data-a="showdone" data-list="' + esc(lid) + '">' + (showDone[lid] ? "Hide" : "Show") + ' done (' + done.length + ')</button>' : "") +
-      (lid ? '<button class="ic" data-a="renlist" data-list="' + esc(lid) + '" title="rename list">&#9998;</button>' + (all.length ? "" : '<button class="ic del" data-a="dellist" data-list="' + esc(lid) + '" title="delete empty list">&#10005;</button>') : "") + '</h3>' +
-      (open.map(t => taskRow(t)).join("") || '<div class="empty">' + (done.length ? "all done" : "no tasks &mdash; drop one here") + '</div>') +
-      (showDone[lid] && done.length ? '<div class="donehdr">Done</div>' + done.map(t => taskRow(t)).join("") : "") + '</div>';
+      (lid ? '<button class="ic" data-a="renlist" data-list="' + esc(lid) + '" title="rename list">&#9998;</button>' + (all.length ? "" : '<button class="ic del" data-a="dellist" data-list="' + esc(lid) + '" title="delete empty list">&#10005;</button>') : "") + '</h3>';
+    if (!groupTasks) {
+      h += (open.map(t => taskRow(t)).join("") || '<div class="empty">' + (done.length ? "all done" : "no tasks &mdash; drop one here") + '</div>') +
+        (showDone[lid] && done.length ? '<div class="donehdr">Done</div>' + done.map(t => taskRow(t)).join("") : "");
+    } else {
+      const { roots, none } = taskGroupsFor(lid, all), showD = !!showDone[lid];
+      let body = roots.map(n => taskBranch(n, lid, all, showD)).join("");
+      if (none.length) {
+        const nOpen = none.filter(t => t.status !== "done"), nDone = none.filter(t => t.status === "done"), key = "t:" + lid + ":_none";
+        let nb = nOpen.map(t => taskRow(t)).join("");
+        if (showD && nDone.length) nb += '<div class="donehdr">Done</div>' + nDone.map(t => taskRow(t)).join("");
+        if (!nb) nb = '<div class="empty">' + (nDone.length ? "all done" : "no tasks") + '</div>';
+        body += '<div class="pgroup">' + gHead(key, "No project", countPills(nOpen.length, none.length)) + (isCol(key) ? "" : '<div class="gbody">' + nb + '</div>') + '</div>';
+      }
+      h += body || ('<div class="empty">' + (done.length ? "all done" : "no tasks &mdash; drop one here") + '</div>');
+    }
+    h += '</div>';
   }
   return h;
 }
+function projectBody(p, o) {
+  o = o || {};
+  const ts = S.tasks.filter(t => t.project_id === p.id && (!o.listId || t.list_id === o.listId));
+  const open = ts.filter(t => t.status !== "done").length;
+  const rs = S.resources.filter(r => r.project_id === p.id);
+  const kids = o.kids || childrenOf(p.id);
+  const par = o.hideParent ? "" : pname(p.parent_id);
+  return '<div class="kv"><div><b>Owner:</b> ' + esc(p.owner || "-") + ' &nbsp; <b>Status:</b> ' + esc(p.status || "-") + '</div>' +
+    (par ? '<div><b>Part of:</b> ' + esc(par) + '</div>' : "") +
+    (kids.length ? '<div><b>Sub-projects:</b> ' + kids.map(k => esc(k.project ? k.project.name : k.name)).join(", ") + '</div>' : "") +
+    (p.description ? '<p>' + esc(p.description) + '</p>' : "") + (p.notes ? '<p class="mut pre">' + esc(p.notes) + '</p>' : "") +
+    '<div><b>Tasks:</b> ' + open + ' open / ' + ts.length + (o.listId ? " in this list" : "") + ' &nbsp; <b>Resources:</b> ' + (rs.map(r => esc(r.name)).join(", ") || "-") + '</div></div>';
+}
+function projectHead(p, key, o) {
+  const ts = o.tasks || S.tasks.filter(t => t.project_id === p.id);
+  const open = ts.filter(t => t.status !== "done").length;
+  const kids = o.kids || [];
+  const actions = '<span class="sp"></span><button class="ic" data-a="edit-project" data-id="' + esc(p.id) + '">edit</button><button class="ic del" data-a="del-project" data-id="' + esc(p.id) + '">&#10005;</button>';
+  return gHead(key, p.name, countPills(open, ts.length) + (kids.length ? '<span class="pill">' + kids.length + ' sub</span>' : "") + '<span class="hdl">' + esc(S.ph[p.id]) + '</span>', actions);
+}
+function descTasks(n, listId) {
+  return S.tasks.filter(t => t.project_id === n.id && (!listId || t.list_id === listId)).concat(n.children.flatMap(c => descTasks(c, listId)));
+}
+function renderProjBranch(n, keyPrefix, o) {
+  o = o || {};
+  const key = keyPrefix + n.id, kids = n.children, ts = descTasks(n, o.listId);
+  return '<div class="pgroup">' + projectHead(n.project, key, { tasks: ts, kids: kids }) +
+    (isCol(key) ? "" : '<div class="gbody"><div class="card">' + projectBody(n.project, { hideParent: true, listId: o.listId, kids: kids }) + '</div>' + kids.map(c => renderProjBranch(c, keyPrefix, o)).join("") + '</div>') +
+    '</div>';
+}
 function rProjects() {
-  let h = '<div class="card"><button class="pri" data-a="new-project">+ Project</button></div><div class="grid">';
-  for (const p of S.projects) {
-    const ts = S.tasks.filter(t => t.project_id === p.id); const open = ts.filter(t => t.status !== "done").length; const rs = S.resources.filter(r => r.project_id === p.id); const kids = S.projects.filter(c => c.parent_id === p.id);
-    const par = pname(p.parent_id);
-    h += '<div class="card"><h3>' + esc(p.name) + '<span class="hdl">' + esc(S.ph[p.id]) + '</span><span class="sp"></span><button class="ic" data-a="edit-project" data-id="' + p.id + '">edit</button><button class="ic del" data-a="del-project" data-id="' + p.id + '">&#10005;</button></h3><div class="kv">' +
-      '<div><b>Owner:</b> ' + esc(p.owner || "-") + ' &nbsp; <b>Status:</b> ' + esc(p.status || "-") + '</div>' + (par ? '<div><b>Part of:</b> ' + esc(par) + '</div>' : "") +
-      (kids.length ? '<div><b>Sub-projects:</b> ' + kids.map(k => esc(k.name)).join(", ") + '</div>' : "") +
-      (p.description ? '<p>' + esc(p.description) + '</p>' : "") + (p.notes ? '<p class="mut pre">' + esc(p.notes) + '</p>' : "") +
-      '<div><b>Tasks:</b> ' + open + ' open / ' + ts.length + ' &nbsp; <b>Resources:</b> ' + (rs.map(r => esc(r.name)).join(", ") || "-") + '</div></div></div>';
+  let h = '<div class="card"><button class="pri" data-a="new-project">+ Project</button>' +
+    '<div class="viewbar"><button type="button" class="ic' + (projMode === "tree" ? " on" : "") + '" data-a="proj-mode" data-m="tree">By hierarchy</button>' +
+    '<button type="button" class="ic' + (projMode === "list" ? " on" : "") + '" data-a="proj-mode" data-m="list">By list</button>' +
+    '<button type="button" class="ic" data-a="expand-all" data-scope="proj">Expand all</button>' +
+    '<button type="button" class="ic" data-a="collapse-all" data-scope="proj">Collapse all</button></div></div>';
+  if (!S.projects.length) return h + '<div class="card empty">No projects.</div>';
+  if (projMode === "tree") {
+    const roots = treeOf(new Set(S.projects.map(p => p.id)));
+    return h + '<div class="ptree">' + roots.map(n => renderProjBranch(n, "p:", {})).join("") + '</div>';
   }
-  if (!S.projects.length) h += '<div class="card empty">No projects.</div>';
-  return h + '</div>';
+  const seen = new Set();
+  for (const l of S.lists) {
+    const ids = new Set(S.tasks.filter(t => t.list_id === l.id && t.project_id && pname(t.project_id)).map(t => t.project_id));
+    if (!ids.size) continue;
+    ids.forEach(id => ancestorsOf(id).forEach(p => seen.add(p.id)));
+    const roots = treeOf(ids), key = "pl:" + l.id;
+    const open = S.tasks.filter(t => t.list_id === l.id && t.project_id && ids.has(t.project_id) && t.status !== "done").length;
+    const tot = S.tasks.filter(t => t.list_id === l.id && t.project_id && ids.has(t.project_id)).length;
+    h += '<div class="card"><h3>' + gHead(key, l.name, countPills(open, tot) + '<span class="pill">' + ids.size + ' project' + (ids.size === 1 ? "" : "s") + '</span>') + '</h3>' +
+      (isCol(key) ? "" : '<div class="gbody">' + roots.map(n => renderProjBranch(n, "pl:" + l.id + ":", { listId: l.id })).join("") + '</div>') + '</div>';
+  }
+  const unused = S.projects.filter(p => !seen.has(p.id));
+  if (unused.length) {
+    const key = "pl:_none", roots = treeOf(new Set(unused.map(p => p.id)));
+    h += '<div class="card"><h3>' + gHead(key, "No tasks", '<span class="pill">' + unused.length + ' project' + (unused.length === 1 ? "" : "s") + '</span>') + '</h3>' +
+      (isCol(key) ? "" : '<div class="gbody">' + roots.map(n => renderProjBranch(n, "pl:_none:", {})).join("") + '</div>') + '</div>';
+  }
+  if (!seen.size && !unused.length) h += '<div class="card empty">No projects.</div>';
+  return h;
 }
 function rInv() {
   let h = '<div class="card"><button class="pri" data-a="new-resource">+ Resource</button> <span class="small mut">Never store secrets here &mdash; note where the secret lives.</span></div><div class="card"><table class="resp"><tr class="hd"><th>Name</th><th>Type</th><th>Project</th><th>Host/IP</th><th>Provider</th><th>OS</th><th>Ports</th><th>Status</th><th>Notes</th><th></th></tr>';
-  for (const r of S.resources) h += '<tr><td><b>' + esc(r.name) + '</b><span class="hdl">' + esc(S.rh[r.id]) + '</span></td><td data-l="Type">' + esc(r.type) + '</td><td data-l="Project">' + esc(pname(r.project_id)) + '</td><td data-l="Host">' + esc(r.host) + '</td><td data-l="Provider">' + esc(r.provider) + '</td><td data-l="OS">' + esc(r.os) + '</td><td data-l="Ports">' + esc(r.ports) + '</td><td data-l="Status">' + esc(r.status) + '</td><td class="small" data-l="Notes">' + esc(r.notes) + '</td><td class="nowrap"><button class="ic" data-a="edit-resource" data-id="' + r.id + '">edit</button><button class="ic del" data-a="del-resource" data-id="' + r.id + '">&#10005;</button></td></tr>';
+  for (const r of S.resources) h += '<tr><td><b>' + esc(r.name) + '</b><span class="hdl">' + esc(S.rh[r.id]) + '</span></td><td data-l="Type">' + esc(r.type) + '</td><td data-l="Project">' + esc(pname(r.project_id)) + '</td><td data-l="Host">' + esc(r.host) + '</td><td data-l="Provider">' + esc(r.provider) + '</td><td data-l="OS">' + esc(r.os) + '</td><td data-l="Ports">' + esc(r.ports) + '</td><td data-l="Status">' + esc(r.status) + '</td><td class="small" data-l="Notes">' + esc(r.notes) + '</td><td class="nowrap"><button class="ic" data-a="edit-resource" data-id="' + esc(r.id) + '">edit</button><button class="ic del" data-a="del-resource" data-id="' + esc(r.id) + '">&#10005;</button></td></tr>';
   if (!S.resources.length) h += '<tr><td colspan="10" class="empty">No resources.</td></tr>';
   return h + '</table></div>';
 }
@@ -258,6 +408,10 @@ document.addEventListener("click", async e => {
   if (a === "up" || a === "down") return act(o => o.move(id, a));
   if (a === "edit-task") return openDlg("task", t);
   if (a === "del-task") { if (confirm("Delete task '" + (t ? t.title : id) + "'?")) act(o => o.remove("task", id)); return; }
+  if (a === "toggle-group-tasks") { groupTasks = !groupTasks; LS.set("groupTasks", groupTasks ? "1" : "0"); return render(); }
+  if (a === "proj-mode") { projMode = b.dataset.m === "list" ? "list" : "tree"; LS.set("projMode", projMode); return render(); }
+  if (a === "toggle-group") { flipCol(b.dataset.k); return; }
+  if (a === "expand-all" || a === "collapse-all") { setCols(allGroupKeys(b.dataset.scope), a === "collapse-all"); return; }
   if (a === "showdone") { const l = b.dataset.list; showDone[l] = !showDone[l]; LS.set("showDone", JSON.stringify(showDone)); return render(); }
   if (a === "alldone") { const on = !S.lists.every(l => showDone[l.id]); S.lists.forEach(l => showDone[l.id] = on); LS.set("showDone", JSON.stringify(showDone)); return render(); }
   if (a === "newlist") { const n = newListName(); if (n) act(o => { if (o.listByName(n)) throw new BBError("list '" + n + "' already exists"); return o.ensureList(n); }); return; }
@@ -296,8 +450,9 @@ document.addEventListener("submit", async e => {
     const owner = (fd.get("owner") || "").trim() || DEFAULTS.owner, repo = (fd.get("repo") || "").trim() || DEFAULTS.repo,
       branch = (fd.get("branch") || "").trim() || DEFAULTS.branch, token = cleanToken(fd.get("token"));
     const say = m => { const el = $("#setmsg"); if (el) { el.textContent = m; el.classList.add("bad"); } err(m); };
-    if (!token && !LS.get("token")) { say("Missing: Fine-grained token. Paste it into the token field, then Save & sync."); $("input[name=token]").focus(); return; }
-    if (token && !/^(github_pat_|ghp_|gho_|ghu_|ghs_|fake_)/.test(token)) { say("That does not look like a GitHub token (it should start with github_pat_)."); return; }
+    if (!token && !fineToken(LS.get("token"))) { say("Missing: Fine-grained token. Paste it into the token field, then Save & sync."); $("input[name=token]").focus(); return; }
+    if (token && /^gh[pousr]_/.test(token)) { say("Classic personal access tokens (ghp_...) are not accepted. Create a fine-grained token (it starts with github_pat_) with Contents: Read and write on the data repo only."); return; }
+    if (token && !/^github_pat_/.test(token)) { say("That does not look like a fine-grained GitHub token (it should start with github_pat_)."); return; }
     if (!/^[A-Za-z0-9-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) { say("Owner / repo name contains invalid characters."); return; }
     LS.set("owner", owner); LS.set("repo", repo); LS.set("branch", branch); if (token) LS.set("token", token);
     LS.set("connect", "1");
@@ -328,7 +483,8 @@ async function testConnection() {
   const tok = cleanToken(fd.get("token")) || c.token;
   out.innerHTML = ""; $("#setmsg").textContent = "Testing " + o + "/" + r + "@" + br + " ...";
   const line = (ok, m) => { const li = document.createElement("li"); li.className = ok ? "ok" : "bad"; li.textContent = (ok ? "\u2713 " : "\u2717 ") + m; out.appendChild(li); return ok; };
-  if (!tok) { line(false, "no token: paste one into the token field"); $("#setmsg").textContent = "Test failed."; return; }
+  if (!tok) { line(false, "no token: paste a fine-grained token (github_pat_...) into the token field"); $("#setmsg").textContent = "Test failed."; return; }
+  if (!/^github_pat_/.test(tok)) { line(false, "classic or unknown token: only fine-grained tokens (github_pat_...) are accepted"); $("#setmsg").textContent = "Test failed."; return; }
   line(true, "token present (" + tok.length + " chars, starts with " + tok.slice(0, 11) + "...)" + (/^github_pat_/.test(tok) ? "" : " - not a fine-grained token"));
   const gh = new GitHub({ owner: o, repo: r, branch: br, token: tok, apiBase: c.apiBase });
   try {

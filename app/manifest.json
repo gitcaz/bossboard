@@ -1,5 +1,5 @@
 {
-  "name": "BossBoard",
+  "name": "BossBoard (by Grok)",
   "short_name": "BossBoard",
   "description": "Tasks, projects and DevOps inventory - offline-first, synced to a private GitHub repo.",
   "start_url": "./",

@@ -43,6 +43,25 @@ export function slug(name) {
     .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "list";
 }
 export function pathFor(kind, id) { return DIRS[kind] + "/" + id + ".json"; }
+/** Task/project/resource ids: 10-char Crockford base32, starting with a letter. */
+export const ITEM_ID_RE = /^[abcdefghjkmnpqrstvwxyz][0-9abcdefghjkmnpqrstvwxyz]{9}$/;
+/** List ids: slugs, optional -suffix (see slug() + randSuffix). */
+export const LIST_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export function isValidId(kind, id) {
+  if (typeof id !== "string" || id.length < 1 || id.length > 48) return false;
+  return kind === "list" ? LIST_ID_RE.test(id) : ITEM_ID_RE.test(id);
+}
+/** True if this path+JSON is a safe item record (id charset, path matches rec.id/kind). */
+export function acceptItem(path, data) {
+  const parsed = parsePath(path);
+  if (!parsed || !data || typeof data !== "object") return false;
+  if (data.id !== parsed.id || data.kind !== parsed.kind) return false;
+  if (!isValidId(parsed.kind, data.id)) return false;
+  if (data.list_id && !isValidId("list", data.list_id)) return false;
+  if (data.project_id && !isValidId("project", data.project_id)) return false;
+  if (data.parent_id && !isValidId("project", data.parent_id)) return false;
+  return true;
+}
 export function parsePath(path) {
   const m = /^(tasks|projects|resources|lists)\/([A-Za-z0-9_-]+)\.json$/.exec(path);
   if (!m) return null;

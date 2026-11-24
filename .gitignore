@@ -8,3 +8,6 @@ import/
 *.db
 *.db-wal
 *.db-shm
+
+# optional tighter fixture deny-list (personal/project names) — never commit
+tests/forbidden.local.txt

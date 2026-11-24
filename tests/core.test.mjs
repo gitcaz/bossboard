@@ -45,7 +45,12 @@ test("merge is commutative, associative, idempotent (random)", () => {
 
 test("ids, handles, refs, timestamps, paths", async () => {
   const ids = new Set(Array.from({ length: 2000 }, C.newId)); assert.equal(ids.size, 2000);
-  for (const id of ids) { assert.match(id, /^[a-hjkmnp-tv-z][0-9a-hjkmnp-tv-z]{9}$/); }
+  for (const id of ids) { assert.match(id, /^[a-hjkmnp-tv-z][0-9a-hjkmnp-tv-z]{9}$/); assert.ok(C.isValidId("task", id)); }
+  assert.ok(C.isValidId("list", "before-leaving")); assert.ok(C.isValidId("list", "home-ab12"));
+  assert.ok(!C.isValidId("task", "not an id")); assert.ok(!C.isValidId("task", "<script>")); assert.ok(!C.isValidId("list", "../etc"));
+  assert.ok(C.acceptItem("tasks/kaaaa11111.json", { id: "kaaaa11111", kind: "task" }));
+  assert.ok(!C.acceptItem("tasks/kaaaa11111.json", { id: "kaaab22222", kind: "task" }));
+  assert.ok(!C.acceptItem("tasks/kaaaa11111.json", { id: "kaaaa11111", kind: "task", project_id: "<x>" }));
   const recs = [{ id: "kaaaa11111" }, { id: "kaaab22222" }, { id: "mzzzz33333", legacy_id: 12 }];
   assert.deepEqual(C.handles(recs), { kaaaa11111: "kaaaa", kaaab22222: "kaaab", mzzzz33333: "12" });
   assert.equal(C.resolveRef(recs, "#12", "task").id, "mzzzz33333");

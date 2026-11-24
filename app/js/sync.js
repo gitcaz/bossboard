@@ -1,5 +1,5 @@
 // Sync engine: local cache (store) + outbox (dirty files) <-> GitHub data repo. One sync = one commit.
-import { Ops, BBError, SCHEMA_VERSION, DIRS, pathFor, parsePath, logPath, canonical, gitBlobSha, mergeRecords } from "./core.js";
+import { Ops, BBError, SCHEMA_VERSION, DIRS, pathFor, parsePath, acceptItem, logPath, canonical, gitBlobSha, mergeRecords } from "./core.js";
 
 const ITEM_RE = /^(tasks|projects|resources|lists)\/[A-Za-z0-9_-]+\.json$/;
 const LOG_RE = /^log\/\d{4}\/\d{2}\/[A-Za-z0-9_-]+\.json$/;
@@ -21,7 +21,10 @@ export class Engine {
   }
   async init() {
     await this.store.open();
-    for (const f of await this.store.allFiles()) this.files.set(f.path, f);
+    for (const f of await this.store.allFiles()) {
+      if (ITEM_RE.test(f.path) && !acceptItem(f.path, f.data)) continue;
+      this.files.set(f.path, f);
+    }
     this.meta = (await this.store.getMeta("sync")) || {};
     this.remoteLog = (await this.store.getMeta("remoteLog")) || [];
     this.status.lastSync = this.meta.lastSync || null;
@@ -168,7 +171,8 @@ export class Engine {
     const texts = await pool(need, 6, ([p, sha]) => this.gh.blobText(sha));
     const upd = [];
     need.forEach(([p, sha], i) => {
-      let data; try { data = JSON.parse(texts[i]); } catch (e) { console.warn("bad JSON in", p); return; }
+      let data; try { data = JSON.parse(texts[i]); } catch (e) { return; }
+      if (ITEM_RE.test(p) && !acceptItem(p, data)) return;
       const f = this.files.get(p);
       if (f && f.dirty && !p.startsWith("log/")) {
         const merged = mergeRecords(f.data, data);

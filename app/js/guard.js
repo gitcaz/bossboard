@@ -1,5 +1,14 @@
 // Classic (non-module) script loaded before app.js: makes every failure visible, even when app.js cannot load.
 (function () {
+  if (window.top !== window.self) {
+    window.__bbFramed = true;
+    window.__bbReady = true;
+    function notice() {
+      document.body.innerHTML = '<main style="padding:2rem;max-width:36rem;margin:10vh auto;font:16px/1.5 system-ui,sans-serif"><h1>BossBoard (by Grok)</h1><p>This app cannot run inside another site. Open it at its own address.</p></main>';
+    }
+    if (document.body) notice(); else document.addEventListener("DOMContentLoaded", notice);
+    return;
+  }
   function show(msg) {
     var b = document.getElementById("banner"); if (!b) return;
     b.style.display = "block"; b.textContent = msg;
