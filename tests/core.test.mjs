@@ -84,6 +84,32 @@ test("Ops: create/update/status/remove/move log with attribution", () => {
   assert.deepEqual([...new Set(db.log_.map(e => e.action))].sort(), ["create", "delete", "reorder", "start", "update"]);
 });
 
+test("duplicate copies content, is open, sits after the original, logs create", () => {
+  const db = memDb(); const ops = new C.Ops(db, "Codex", "test");
+  const p = ops.create("project", { name: "Website" });
+  const a = ops.create("task", { title: "Fix pipe", list: "Work", project_id: p.id, priority: 1, due: "2026-11-05", notes: "from log", status: "done" });
+  const b = ops.create("task", { title: "After", list: "Work" });
+  const c = ops.duplicate(a.id);
+  assert.notEqual(c.id, a.id);
+  assert.equal(c.title, "Fix pipe");
+  assert.equal(c.status, "todo");
+  assert.equal(c.completed_at, null);
+  assert.equal(c.list_id, a.list_id);
+  assert.equal(c.project_id, p.id);
+  assert.equal(c.priority, 1);
+  assert.equal(c.due, "2026-11-05");
+  assert.equal(c.notes, "from log");
+  assert.notEqual(c.created_at, a.created_at);
+  assert.equal(c.created_by, "codex");
+  const work = C.live(db, "task").filter(t => t.list_id === a.list_id).sort((x, y) => x.sort_order - y.sort_order);
+  assert.deepEqual(work.map(t => t.id), [a.id, c.id, b.id]);
+  const creates = db.log_.filter(e => e.action === "create" && e.entity === "task" && e.entity_id === c.id);
+  assert.equal(creates.length, 1);
+  assert.equal(creates[0].by, "codex");
+  assert.ok(!("legacy_id" in c) || c.legacy_id == null);
+  assert.throws(() => ops.duplicate("missing"), /not found/);
+});
+
 test("cross-language: canonical() and mergeRecords() agree with cli/bb.py", () => {
   const cases = [];
   let seed = 99; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;

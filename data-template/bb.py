@@ -655,6 +655,24 @@ class Ops:
             patch["list_id"] = list_id
         return self.update("task", iid, patch)
 
+    def duplicate(self, iid):
+        t = self.db.get("task", iid)
+        if not t or t.get("deleted"):
+            raise BBError("task not found", 404)
+        sibs = sorted([x for x in live(self.db, "task") if x.get("list_id") == t.get("list_id")],
+                      key=lambda x: (x.get("sort_order") or 0, x["id"]))
+        i = next((k for k, x in enumerate(sibs) if x["id"] == iid), -1)
+        lo = t.get("sort_order") or 0
+        hi = sibs[i + 1]["sort_order"] if i >= 0 and i + 1 < len(sibs) else None
+        so = (lo + 10) if hi is None else ((lo + hi) / 2 if (hi - lo) > 1e-6 else None)
+        rec = self.create("task", {"title": t["title"], "list_id": t.get("list_id"), "project_id": t.get("project_id"),
+                                   "notes": t.get("notes"), "priority": t.get("priority"), "due": t.get("due"),
+                                   "status": "todo", **({"sort_order": so} if so is not None else {})})
+        if so is None:
+            before = sibs[i + 1]["id"] if i + 1 < len(sibs) else None
+            return self.place(rec["id"], t.get("list_id"), before)
+        return rec
+
     def move(self, iid, direction):
         t = self.db.get("task", iid)
         sibs = sorted([x for x in live(self.db, "task") if x.get("list_id") == t.get("list_id")],
@@ -1264,6 +1282,8 @@ def cmd_write(a, be):
             return [ops.remove("task", _ref(snap, "task", i)["id"]) for i in a.ids]
         if c == "move-task":
             return [ops.move(_ref(snap, "task", a.id)["id"], a.direction)]
+        if c == "duplicate-task":
+            return [ops.duplicate(_ref(snap, "task", a.id)["id"])]
         if c == "add-list":
             return [ops.ensure_list(a.name)]
         if c == "rename-list":
@@ -1437,10 +1457,10 @@ def cmd_read(a, be):
 
 
 # ---------------------------------------------------------------- argparse
-WRITE_CMDS = {"add-task", "update-task", "done", "start", "reopen", "delete-task", "move-task", "add-list", "rename-list",
+WRITE_CMDS = {"add-task", "update-task", "done", "start", "reopen", "delete-task", "move-task", "duplicate-task", "add-list", "rename-list",
               "delete-list", "add-project", "update-project", "delete-project", "add-resource", "update-resource",
               "delete-resource"}
-ALIASES = {"add": "add-task", "edit": "update-task", "ls": "list", "inventory": "resources"}
+ALIASES = {"add": "add-task", "edit": "update-task", "dup": "duplicate-task", "ls": "list", "inventory": "resources"}
 
 
 def build_parser():
@@ -1482,6 +1502,8 @@ def build_parser():
     p = sub("move-task", "reorder a task within its list")
     p.add_argument("id")
     p.add_argument("direction", choices=["up", "down", "top", "bottom"])
+    p = sub("duplicate-task", "duplicate a task (new open copy, placed after the original)", ["dup"])
+    p.add_argument("id", help="task handle or id")
     p = sub("list", "list tasks (open only by default)", ["ls"])
     p.add_argument("--list", "-l")
     p.add_argument("--project", "-p")

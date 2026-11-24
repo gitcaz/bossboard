@@ -41,6 +41,7 @@ bb.py lists | add-list NAME | rename-list OLD NEW | delete-list NAME
 bb.py add-task "Title" [-l Home] [-p Website] [-P 1..5] [-d tomorrow|2026-11-05|fri|+3d] [-n notes] --by codex
 bb.py update-task 12 [--title ..] [-l ..] [-p ..|none] [-P ..] [-d ..|none] [-n ..] [--status ..] --by codex   (alias: edit)
 bb.py start 12 | done 12 13 | reopen 12 | delete-task 12 | move-task 12 up|down|top|bottom   --by codex
+bb.py dup 12 --by codex          # new open copy of the task, placed after the original (alias: duplicate-task)
 bb.py show task|project|resource REF [--json]
 bb.py projects [--json] | add-project NAME [-d ..] [-o owner] [-s status] [-n ..] [--parent NAME] --by codex
 bb.py update-project REF [...] --by codex | delete-project REF --by codex

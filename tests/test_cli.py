@@ -74,6 +74,13 @@ class GitBackendTests(unittest.TestCase):
         self.bb1("move-task", t3["handle"], "top", "--by", "boss")
         home = [x["id"] for x in J(self.bb1("list", "-l", "Home", "--all", "--json"))]
         self.assertEqual(home[0], t3["id"])
+        cur = J(self.bb1("show", "task", t["handle"], "--json"))
+        dup = J(self.bb1("dup", t["handle"], "--by", "codex", "--json"))
+        self.assertEqual((dup["title"], dup["status"], dup["list"]), (cur["title"], "todo", cur["list"]))
+        self.assertNotEqual(dup["id"], t["id"])
+        work = [x["id"] for x in J(self.bb1("list", "-l", "Work", "--json"))]
+        self.assertEqual(work[work.index(t["id"]) + 1], dup["id"])
+        self.bb1("delete-task", dup["handle"], "--by", "boss")
         bad = self.bb1("add-resource", "Leak", "-n", "sk-abcdefghijklmnopqrstuvwxyz123456", "--by", "boss", check=False)
         self.assertEqual(bad.returncode, 1)
         self.assertIn("secret", bad.stderr)

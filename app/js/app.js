@@ -4,7 +4,7 @@ import { GitHub, safeApiBase } from "./github.js";
 import { IDBStore } from "./store.js";
 import { live, listsSorted, tasksSorted, nextUp, todayView, nameOf, handles, dayStr, BBError } from "./core.js";
 
-const VERSION = "3.1.0";
+const VERSION = "3.1.1";
 const DEFAULTS = { owner: "gitcaz", repo: "bossboard-data", branch: "main" };  // empty fields fall back to these
 const $ = s => document.querySelector(s);
 const LS = {
@@ -13,7 +13,7 @@ const LS = {
 };
 const TABS = ["next", "today", "tasks", "projects", "inventory", "activity", "settings"];
 let tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : (LS.get("tab") || "next");
-let showDone = JSON.parse(LS.get("showDone") || "{}"), dragId = null, engine = null, S = null;
+let showDone = JSON.parse(LS.get("showDone") || "{}"), dragId = null, engine = null, S = null, flashId = null, dupFlash = {};
 let groupTasks = LS.get("groupTasks") !== "0";                 // default ON
 let projMode = LS.get("projMode") === "list" ? "list" : "tree";
 let collapsed = {};
@@ -148,12 +148,13 @@ function rToday() {
 }
 function taskRow(t, o) {
   o = o || {}; const done = t.status === "done"; const pn = o.bigProj ? pname(t.project_id) : "";
-  return '<div class="row' + (done ? " done" : "") + '"' + (o.noMove ? "" : ' draggable="true"') + ' data-tid="' + esc(t.id) + '" data-list="' + esc(t.list_id) + '">' +
+  return '<div class="row' + (done ? " done" : "") + (t.id === flashId ? " flash" : "") + '"' + (o.noMove ? "" : ' draggable="true"') + ' data-tid="' + esc(t.id) + '" data-list="' + esc(t.list_id) + '">' +
     (o.noMove ? "" : '<span class="handle" title="drag to reorder / move to another list">&#8942;&#8942;</span>') + '<input type="checkbox" title="' + (done ? "reopen" : "mark done") + '" data-a="toggle" data-id="' + esc(t.id) + '"' + (done ? " checked" : "") + '>' +
     '<div class="t"><span class="tt">' + esc(t.title) + '</span>' + pill(t, { list: o.list, noProj: o.noProj || !!pn }) + '<span class="hdl">' + esc(S.th[t.id]) + '</span>' + (pn ? '<div class="rowproj">' + esc(pn) + '</div>' : "") + (t.notes ? '<div class="nt">' + esc(t.notes) + '</div>' : "") + '</div>' +
     (done ? '<button class="ic" data-a="reopen" data-id="' + esc(t.id) + '">&#8634; Reopen</button>' :
       (t.status === "todo" ? '<button class="ic" data-a="start" data-id="' + esc(t.id) + '" title="start">&#9654;</button>' : '<button class="ic" data-a="reopen" data-id="' + esc(t.id) + '" title="pause (back to todo)">&#10073;&#10073;</button>') +
       (o.noMove ? "" : '<button class="ic" data-a="up" data-id="' + esc(t.id) + '" title="move up">&#8593;</button><button class="ic" data-a="down" data-id="' + esc(t.id) + '" title="move down">&#8595;</button>')) +
+    '<button class="ic" data-a="dup-task" data-id="' + esc(t.id) + '" title="Duplicate" aria-label="Duplicate">&#10697;</button>' +
     '<button class="ic" data-a="edit-task" data-id="' + esc(t.id) + '">edit</button><button class="ic del" data-a="del-task" data-id="' + esc(t.id) + '">&#10005;</button></div>';
 }
 function listSel(name, sel) {
@@ -406,6 +407,16 @@ document.addEventListener("click", async e => {
   const t = id && engine.db.get("task", id);
   if (a === "done" || a === "start" || a === "reopen") return act(o => o.setStatus(id, { done: "done", start: "doing", reopen: "todo" }[a]));
   if (a === "up" || a === "down") return act(o => o.move(id, a));
+  if (a === "dup-task") {
+    return act(o => o.duplicate(id)).then(rec => {
+      if (!rec) return;
+      flashId = rec.id; render();
+      const el = document.querySelector('.row[data-tid="' + CSS.escape(rec.id) + '"]');
+      if (el) el.scrollIntoView({ block: "nearest" });
+      clearTimeout(dupFlash.t);
+      dupFlash.t = setTimeout(() => { if (flashId === rec.id) { flashId = null; const r = document.querySelector('.row[data-tid="' + CSS.escape(rec.id) + '"]'); if (r) r.classList.remove("flash"); } }, 1600);
+    });
+  }
   if (a === "edit-task") return openDlg("task", t);
   if (a === "del-task") { if (confirm("Delete task '" + (t ? t.title : id) + "'?")) act(o => o.remove("task", id)); return; }
   if (a === "toggle-group-tasks") { groupTasks = !groupTasks; LS.set("groupTasks", groupTasks ? "1" : "0"); return render(); }

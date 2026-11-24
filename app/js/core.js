@@ -373,6 +373,18 @@ export class Ops {
     const patch = { sort_order: so }; if (listId !== t.list_id) patch.list_id = listId;
     return this.update("task", id, patch, ts);
   }
+  /** New open task copying content fields; placed immediately after the original. Fresh id and timestamps; no history. */
+  duplicate(id, ts) {
+    ts = ts || nowTs();
+    const t = this.db.get("task", id); if (!t || t.deleted) throw new BBError("task not found", 404);
+    const sibs = live(this.db, "task").filter(x => x.list_id === t.list_id).sort((a, b) => (a.sort_order - b.sort_order) || (a.id < b.id ? -1 : 1));
+    const i = sibs.findIndex(x => x.id === id);
+    const lo = t.sort_order || 0, hi = (i >= 0 && i + 1 < sibs.length) ? sibs[i + 1].sort_order : null;
+    const so = (hi == null) ? lo + 10 : (hi - lo > 1e-6 ? (lo + hi) / 2 : null);
+    const rec = this.create("task", { title: t.title, list_id: t.list_id, project_id: t.project_id ?? null, notes: t.notes ?? null, priority: t.priority, due: t.due ?? null, status: "todo", sort_order: so == null ? undefined : so }, ts);
+    if (so == null) { const before = i + 1 < sibs.length ? sibs[i + 1].id : null; return this.place(rec.id, t.list_id, before, ts); }
+    return rec;
+  }
   move(id, dir, ts) {
     const t = this.db.get("task", id); if (!t || t.deleted) throw new BBError("task not found", 404);
     const sibs = live(this.db, "task").filter(x => x.list_id === t.list_id).sort((a, b) => a.sort_order - b.sort_order || (a.id < b.id ? -1 : 1));

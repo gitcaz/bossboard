@@ -125,6 +125,15 @@ try {
     check(await page.evaluate(() => localStorage.getItem("bb3.groupTasks") === "0"), "grouping-off pref stored");
     await page.click('[data-a="toggle-group-tasks"]');
     check(await page.locator(".droplist .ghead").count() > 0, "grouping can be turned back on");
+    const dupBtn = page.locator(".row", { hasText: "Sort the mail" }).first().locator('[data-a="dup-task"]');
+    check(await dupBtn.getAttribute("aria-label") === "Duplicate", "Duplicate button has aria-label");
+    const before = await page.locator(".row", { hasText: "Sort the mail" }).count();
+    await dupBtn.click();
+    await page.waitForFunction(n => document.querySelectorAll('.row').length && [...document.querySelectorAll('.row')].filter(r => r.innerText.includes("Sort the mail")).length > n, before, { timeout: 8000 });
+    check(await page.locator(".row", { hasText: "Sort the mail" }).count() === before + 1, "Duplicate adds a second task with the same title");
+    check(await page.locator(".row.flash", { hasText: "Sort the mail" }).count() === 1, "new copy is briefly highlighted");
+    const order = await page.evaluate(() => [...document.querySelectorAll(".droplist")].filter(el => el.querySelector("h3") && el.querySelector("h3").textContent.includes("Home")).flatMap(el => [...el.querySelectorAll(".row")].filter(r => r.innerText.includes("Sort the mail")).map(r => r.className)));
+    check(order.length >= 2 && /flash/.test(order[1]), "copy is placed immediately after the original");
     await page.screenshot({ path: path.join(SHOTS, vp.name + "-tasks-grouped.png"), fullPage: true });
 
     await page.evaluate(() => { location.hash = "#projects"; });
